@@ -88,20 +88,28 @@ async function connect(opts) {
     return wrapLibsql(c);
   }
 
-  const file = resolve((opts.url || opts.file || './data/conv-lens.db').replace(/^file:/, ''));
-  mkdirSync(dirname(file), { recursive: true });
+  let file = resolve((opts.url || opts.file || './data/conv-lens.db').replace(/^file:/, ''));
+  // A serverless filesystem is read-only apart from /tmp. Without this, a deployment with no
+  // database configured dies on the first request instead of coming up and saying so.
+  let temporary = false;
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+  } catch {
+    file = '/tmp/conv-lens.db';
+    temporary = true;
+  }
   try {
     const { DatabaseSync } = await import('node:sqlite');
     const db = new DatabaseSync(file);
     db.exec('PRAGMA busy_timeout = 8000');
     try { db.exec('PRAGMA journal_mode = WAL'); } catch {}
     db.exec('PRAGMA synchronous = NORMAL');
-    kind = 'sqlite';
+    kind = temporary ? 'tmp' : 'sqlite';
     return wrapNodeSqlite(db);
   } catch {
     // Older Node without node:sqlite: libSQL reads the same file format.
     const { createClient } = await import('@libsql/client');
-    kind = 'libsql-file';
+    kind = temporary ? 'tmp' : 'libsql-file';
     return wrapLibsql(createClient({ url: 'file:' + file }));
   }
 }
