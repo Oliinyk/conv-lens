@@ -253,8 +253,6 @@ export async function segments(db, f) {
   return { convSessions: conv, restSessions: rest, features: out };
 }
 
-export let __lastSessionSql = null;
-
 export async function sessionList(db, f, opts = {}) {
   const order = {
     friction: 's.friction DESC, s.max_step DESC',
@@ -278,7 +276,6 @@ export async function sessionList(db, f, opts = {}) {
       (SELECT COUNT(DISTINCT v.visitor_id) FROM sessions v WHERE v.ip = s.ip AND s.ip != '') ip_people
     FROM sessions s WHERE ${f.sql} ${extra.length ? 'AND ' + extra.join(' AND ') : ''}
     ORDER BY ${order} LIMIT ?`;
-  __lastSessionSql = { sql, args: [...args, Number(opts.limit) || 60] };
   return (await db.prepare(sql).all(...args, Number(opts.limit) || 60));
 }
 

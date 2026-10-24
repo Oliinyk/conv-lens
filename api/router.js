@@ -23,8 +23,12 @@ export default async function handler(req, res) {
   // Every /api/* and /cl/* path is rewritten here by vercel.json, which passes the original
   // path in __p. Relying on the platform's own dynamic-segment parameter did not work:
   // a catch-all matched one segment only, so /api/site/adopt came back 404.
+  // The rewrite passes the original path in __p and, because it is a named capture, Vercel
+  // repeats it under the capture's own name. Both are dropped: a leaked "path" once became a
+  // page filter and silently emptied the session list.
   const fromRewrite = q.__p;
   delete q.__p;
+  delete q.__clpath;
   let route = Array.isArray(fromRewrite) ? fromRewrite.join('/') : String(fromRewrite || '');
   if (!route) {
     const url = new URL(req.url || '/', 'http://localhost');

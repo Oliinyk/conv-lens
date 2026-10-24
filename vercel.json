@@ -12,12 +12,12 @@
       "destination": "/dashboard/index.html"
     },
     {
-      "source": "/cl/:path*",
-      "destination": "/api/router?__p=:path*"
+      "source": "/cl/:__clpath*",
+      "destination": "/api/router?__p=:__clpath*"
     },
     {
-      "source": "/api/:path*",
-      "destination": "/api/router?__p=:path*"
+      "source": "/api/:__clpath*",
+      "destination": "/api/router?__p=:__clpath*"
     }
   ],
   "headers": [
