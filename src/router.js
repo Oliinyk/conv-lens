@@ -266,6 +266,31 @@ export async function handle(req, opts = {}) {
       case 'heatmap': return json(200, await agg.heatmap(db, f, q.path || '/', q.device || '', q.sid || ''));
       case 'events': return json(200, await customEvents(db, f));
       case 'storage': return json(200, await agg.storage(db, site.id));
+      case '_diag': {
+        const out = {};
+        const probe = async (name, sql, args) => {
+          try { out[name] = (await db.prepare(sql).all(...args)).length; }
+          catch (e) { out[name] = 'ERR: ' + String((e && e.message) || e).slice(0, 180); }
+        };
+        await probe('plain', `SELECT s.id FROM sessions s WHERE ${f.sql} LIMIT 5`, f.args);
+        await probe('withLimitParam', `SELECT s.id FROM sessions s WHERE ${f.sql} LIMIT ?`, [...f.args, 5]);
+        await probe('withOrder', `SELECT s.id FROM sessions s WHERE ${f.sql} ORDER BY s.started_at DESC LIMIT ?`, [...f.args, 5]);
+        await probe('allColumns', `SELECT s.id, s.started_at, s.duration, s.device, s.browser, s.source, s.medium, s.country,
+            s.entry_path, s.exit_path, s.pageviews, s.max_step, s.max_step_id, s.converted, s.revenue,
+            s.friction, s.rage, s.dead, s.js_errors, s.net_errors, s.validation_errors,
+            s.max_depth, s.cta_seen, s.last_field, s.lcp, s.inp, s.has_replay, s.identity,
+            s.visitor_id, s.ip, s.city, s.region
+          FROM sessions s WHERE ${f.sql} LIMIT ?`, [...f.args, 5]);
+        await probe('withSubqueries', `SELECT s.id,
+            (SELECT COUNT(*) FROM sessions v WHERE v.visitor_id = s.visitor_id AND v.started_at <= s.started_at) visit_no,
+            (SELECT COUNT(*) FROM sessions v WHERE v.visitor_id = s.visitor_id) visits,
+            (SELECT COUNT(DISTINCT v.visitor_id) FROM sessions v WHERE v.ip = s.ip AND s.ip != '') ip_people
+          FROM sessions s WHERE ${f.sql} LIMIT ?`, [...f.args, 5]);
+        try { out.real = (await agg.sessionList(db, f, q)).length; }
+        catch (e) { out.real = 'ERR: ' + String((e && e.message) || e).slice(0, 180); }
+        out.filter = { sql: f.sql, args: f.args };
+        return json(200, out);
+      }
       case 'delete': {
         if (method !== 'POST') return json(405, { error: 'POST only' });
         let id = q.id;
