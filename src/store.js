@@ -122,3 +122,37 @@ export async function needsSetup(db) {
   if (await adminToken(db)) return false;
   return (await listSites(db)).length === 0;
 }
+
+// Rows written before Conv Lens became multi-site carry no site_id and are invisible to
+// every query. Rather than sending someone into a SQL console, the dashboard can adopt them
+// into a site. Done in batches so one call cannot outrun a serverless timeout.
+export async function countOrphans(db) {
+  const q = async (t) => {
+    const r = await db.prepare(`SELECT COUNT(*) n FROM ${t} WHERE site_id IS NULL OR site_id = ''`).get();
+    return (r && r.n) || 0;
+  };
+  return { sessions: await q('sessions'), events: await q('events'), snapshots: await q('snapshots') };
+}
+
+export async function adoptOrphans(db, siteId, batch = 400) {
+  if (!siteId) return { moved: 0, remaining: 0 };
+  const ids = (await db.prepare(
+    `SELECT id FROM sessions WHERE site_id IS NULL OR site_id = '' LIMIT ${Number(batch) || 400}`
+  ).all()).map((r) => r.id);
+
+  if (ids.length) {
+    const marks = ids.map(() => '?').join(',');
+    await db.batch([
+      { sql: `UPDATE events SET site_id = ? WHERE session_id IN (${marks})`, args: [siteId, ...ids] },
+      { sql: `UPDATE snapshots SET site_id = ? WHERE session_id IN (${marks})`, args: [siteId, ...ids] },
+      { sql: `UPDATE sessions SET site_id = ? WHERE id IN (${marks})`, args: [siteId, ...ids] }
+    ]);
+  }
+
+  // Events and snapshots whose session was already stamped, or whose session is gone.
+  await db.prepare("UPDATE events SET site_id = ? WHERE site_id IS NULL OR site_id = ''").run(siteId);
+  await db.prepare("UPDATE snapshots SET site_id = ? WHERE site_id IS NULL OR site_id = ''").run(siteId);
+
+  const left = await db.prepare("SELECT COUNT(*) n FROM sessions WHERE site_id IS NULL OR site_id = ''").get();
+  return { moved: ids.length, remaining: (left && left.n) || 0 };
+}

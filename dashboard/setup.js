@@ -363,6 +363,40 @@ export async function renderSettings(view, ctx) {
   snippetCard.appendChild(rotate);
   view.appendChild(snippetCard);
 
+  // --- data recorded before this instance knew about sites
+  const orph = d.orphans || {};
+  if (orph.sessions || orph.events) {
+    const out = h('p', { class: 'inst wait' },
+      `У базі є ${nf(orph.sessions)} сесій і ${nf(orph.events)} подій без привʼязки до сайту — `
+      + 'найчастіше це дані, записані до переїзду на окрему Conv Lens. Зараз вони в жодному звіті не видно.');
+    const btn = h('button', { class: 'primary', type: 'button' }, 'Прийняти їх у цей сайт');
+    btn.addEventListener('click', async () => {
+      if (!confirm(`Усі ${nf(orph.sessions)} сесій без привʼязки стануть даними сайту «${site.name}». Продовжити?`)) return;
+      btn.disabled = true;
+      let moved = 0;
+      try {
+        for (let pass = 0; pass < 200; pass++) {
+          const r = await apiPost('site/adopt', {});
+          moved += r.moved || 0;
+          btn.textContent = `Переносимо… ${nf(moved)}`;
+          if (!r.remaining) break;
+        }
+        out.className = 'inst ok';
+        out.textContent = `Готово: ${nf(moved)} сесій тепер належать цьому сайту. Натисніть «Оновити», щоб побачити їх у звітах.`;
+        btn.remove();
+      } catch (e) {
+        out.textContent = 'Не вдалось: ' + e.message;
+        btn.disabled = false;
+        btn.textContent = 'Спробувати ще раз';
+      }
+    });
+    view.appendChild(h('div', { class: 'card set-form' }, [
+      h('h2', {}, 'Дані без сайту'),
+      out,
+      btn
+    ]));
+  }
+
   // --- how much space this site takes
   if (usage) {
     const mb = (b) => (b ? (b / 1048576).toFixed(1) + ' МБ' : '—');

@@ -13,7 +13,8 @@ import { inspectSite } from './detect.js';
 import { publicConfig } from './config.js';
 import {
   listSites, getSite, createSite, updateSite, rotateKey, deleteSite, resolveSite,
-  siteConfig, adminToken, tokenIsFromEnv, needsSetup, setSetting, newKey
+  siteConfig, adminToken, tokenIsFromEnv, needsSetup, setSetting, newKey,
+  countOrphans, adoptOrphans
 } from './store.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -183,7 +184,9 @@ export async function handle(req, opts = {}) {
   if (route === 'site') {
     if (method === 'GET') {
       const seen = await db.prepare('SELECT COUNT(*) n, MAX(last_at) last FROM sessions WHERE site_id = ?').get(site.id);
+      const orphans = await countOrphans(db);
       return json(200, {
+        orphans,
         site, config: cfg,
         snippet: snippetFor(cfg, opts.publicOrigin || ''),
         connect: connectCode(cfg, opts.publicOrigin || ''),
@@ -196,6 +199,12 @@ export async function handle(req, opts = {}) {
       const updated = await updateSite(db, site.id, { name: b.name, origin: b.origin, config: b.config });
       return json(200, { site: updated, config: siteConfig(updated) });
     }
+  }
+
+  // Adopts data recorded before this instance knew about sites.
+  if (route === 'site/adopt') {
+    if (method !== 'POST') return json(405, { error: 'POST only' });
+    return json(200, await adoptOrphans(db, site.id));
   }
 
   if (route === 'site/key') {
