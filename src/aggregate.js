@@ -391,3 +391,101 @@ export async function storage(db, siteId = '') {
   const pages = pc ? Number(Object.values(pc)[0]) : 0, psize = ps ? Number(Object.values(ps)[0]) : 0;
   return { events: ev, scene, moves, types, snapshots: sn, sessions: ss, fileBytes: pages && psize ? pages * psize : null };
 }
+
+// ---------------------------------------------------------------- traffic sources
+// Grouping in the spirit of GA's default channels, but derived from what parseSource
+// already wrote into the session, so nothing new has to be collected.
+const CHANNELS = [
+  { id: 'direct', name: 'Прямі заходи', test: (r) => r.medium === 'none' || r.source === 'direct' },
+  { id: 'organic', name: 'Пошук', test: (r) => r.medium === 'organic' },
+  { id: 'cpc', name: 'Платний пошук', test: (r) => /^(cpc|ppc|paid|paidsearch|paid_search)$/.test(r.medium) },
+  { id: 'paid_social', name: 'Платні соцмережі', test: (r) => r.medium === 'paid_social' },
+  { id: 'social', name: 'Соцмережі', test: (r) => r.medium === 'social' },
+  { id: 'email', name: 'Розсилка', test: (r) => /^(email|e-mail|newsletter)$/.test(r.medium) },
+  { id: 'referral', name: 'Переходи з сайтів', test: (r) => r.medium === 'referral' },
+  { id: 'other', name: 'Інше', test: () => true }
+];
+
+const channelOf = (row) => CHANNELS.find((c) => c.test(row)) || CHANNELS[CHANNELS.length - 1];
+
+const withRates = (r) => ({
+  ...r,
+  sessions: r.sessions || 0,
+  orders: r.orders || 0,
+  revenue: Math.round(r.revenue || 0),
+  cr: pct(r.orders, r.sessions),
+  bounceRate: pct(r.bounced, r.sessions),
+  friction: Math.round(r.friction || 0),
+  dwell: Math.round(r.dwell || 0),
+  pages: Math.round((r.pages || 0) * 10) / 10
+});
+
+const METRICS = `COUNT(*) sessions, SUM(s.converted) orders, SUM(s.revenue) revenue,
+  AVG(s.friction) friction, AVG(s.duration)/1000 dwell, AVG(s.pageviews) pages,
+  SUM(CASE WHEN s.duration < 5000 AND s.pageviews <= 1 THEN 1 ELSE 0 END) bounced`;
+
+export async function trafficSources(db, f) {
+  const rows = (await db.prepare(`SELECT s.source, s.medium, ${METRICS}
+    FROM sessions s WHERE ${f.sql} GROUP BY s.source, s.medium
+    ORDER BY sessions DESC LIMIT 200`).all(...f.args)).map(withRates);
+
+  // Channels are folded from the same rows, so the two tables can never disagree.
+  const byChannel = new Map();
+  for (const r of rows) {
+    const ch = channelOf(r);
+    const acc = byChannel.get(ch.id) || { id: ch.id, name: ch.name, sessions: 0, orders: 0, revenue: 0, bounced: 0, fsum: 0, dsum: 0 };
+    acc.sessions += r.sessions;
+    acc.orders += r.orders;
+    acc.revenue += r.revenue;
+    acc.bounced += r.bounced || 0;
+    acc.fsum += (r.friction || 0) * r.sessions;
+    acc.dsum += (r.dwell || 0) * r.sessions;
+    byChannel.set(ch.id, acc);
+  }
+  const channels = [...byChannel.values()]
+    .map((c) => withRates({ ...c, friction: c.sessions ? c.fsum / c.sessions : 0, dwell: c.sessions ? c.dsum / c.sessions : 0 }))
+    .sort((a, b) => b.sessions - a.sessions);
+
+  const campaigns = (await db.prepare(`SELECT s.campaign, s.source, s.medium, ${METRICS}
+    FROM sessions s WHERE ${f.sql} AND COALESCE(s.campaign, '') != ''
+    GROUP BY s.campaign, s.source, s.medium ORDER BY sessions DESC LIMIT 40`).all(...f.args)).map(withRates);
+
+  const landing = (await db.prepare(`SELECT s.entry_path path, ${METRICS}
+    FROM sessions s WHERE ${f.sql} AND COALESCE(s.entry_path, '') != ''
+    GROUP BY s.entry_path ORDER BY sessions DESC LIMIT 25`).all(...f.args)).map(withRates);
+
+  // Referrers are stored as full URLs; fold them to host + path so one site is one row.
+  const refRows = await db.prepare(`SELECT s.referrer, COUNT(*) sessions, SUM(s.converted) orders, SUM(s.revenue) revenue
+    FROM sessions s WHERE ${f.sql} AND COALESCE(s.referrer, '') != ''
+    GROUP BY s.referrer ORDER BY sessions DESC LIMIT 400`).all(...f.args);
+  const byRef = new Map();
+  for (const r of refRows) {
+    let key = r.referrer;
+    try {
+      const u = new URL(r.referrer);
+      key = u.hostname.replace(/^www\./, '') + (u.pathname && u.pathname !== '/' ? u.pathname.slice(0, 40) : '');
+    } catch { /* keep the raw value */ }
+    const acc = byRef.get(key) || { referrer: key, sessions: 0, orders: 0, revenue: 0 };
+    acc.sessions += r.sessions;
+    acc.orders += r.orders || 0;
+    acc.revenue += r.revenue || 0;
+    byRef.set(key, acc);
+  }
+  const referrers = [...byRef.values()]
+    .map((r) => ({ ...r, revenue: Math.round(r.revenue), cr: pct(r.orders, r.sessions) }))
+    .sort((a, b) => b.sessions - a.sessions)
+    .slice(0, 25);
+
+  const daily = await db.prepare(`SELECT strftime('%Y-%m-%d', s.started_at / 1000, 'unixepoch') day,
+      s.source, s.medium, COUNT(*) sessions
+    FROM sessions s WHERE ${f.sql} GROUP BY day, s.source, s.medium ORDER BY day`).all(...f.args);
+  const byDay = new Map();
+  for (const r of daily) {
+    const ch = channelOf(r).name;
+    const row = byDay.get(r.day) || { day: r.day };
+    row[ch] = (row[ch] || 0) + r.sessions;
+    byDay.set(r.day, row);
+  }
+
+  return { channels, sources: rows, campaigns, referrers, landing, daily: [...byDay.values()] };
+}

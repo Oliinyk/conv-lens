@@ -211,6 +211,7 @@ export async function handle(req, opts = {}) {
       case 'speed': return json(200, await agg.speed(db, f));
       case 'segments': return json(200, await agg.segments(db, f));
       case 'sources': return json(200, { sources: await agg.sources(db, f) });
+      case 'traffic': return json(200, { ...(await agg.trafficSources(db, f)), currency: cfg.currency });
       case 'survey': return json(200, await agg.surveyAnswers(db, f));
       case 'paths': return json(200, { paths: await agg.pathList(db, f) });
       case 'heatmap': return json(200, await agg.heatmap(db, f, q.path || '/', q.device || '', q.sid || ''));

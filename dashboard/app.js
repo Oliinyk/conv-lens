@@ -510,8 +510,107 @@ const TABS = {
   overview: renderOverview, insights: renderInsights, funnel: renderFunnel,
   sessions: renderSessions, heat: renderHeat, elements: renderElements,
   forms: renderForms, speed: renderSpeed, segments: renderSegments, survey: renderSurvey,
+  sources: renderSources,
   events: renderEvents, settings: renderSettingsTab
 };
+
+// Where visitors come from: channels, exact sources, campaigns, referring sites and
+// landing pages — each with what matters, which is conversion, not just volume.
+async function renderSources() {
+  const d = await api('traffic');
+  const cur = d.currency || state.currency || '';
+  view.innerHTML = '';
+
+  if (!d.channels.length) {
+    view.appendChild(h('div', { class: 'empty' }, 'За цей період ще немає візитів.'));
+    return;
+  }
+
+  const total = d.channels.reduce((a, c) => a + c.sessions, 0);
+  const biggest = d.channels[0];
+  const earners = d.channels.filter((c) => c.orders > 0).sort((a, b) => b.revenue - a.revenue);
+  const best = [...d.channels].filter((c) => c.sessions >= 5).sort((a, b) => b.cr - a.cr)[0];
+  const worst = [...d.channels].filter((c) => c.sessions >= 10).sort((a, b) => b.bounceRate - a.bounceRate)[0];
+
+  view.appendChild(h('div', { class: 'grid cols-4', style: 'margin-bottom:14px' }, [
+    tile('Найбільший канал', biggest.name, `${nf(biggest.sessions)} сесій · ${Math.round((biggest.sessions / total) * 100)}% трафіку`),
+    tile('Найбільше грошей', earners.length ? earners[0].name : '—', earners.length ? money(earners[0].revenue, cur) : 'замовлень ще немає'),
+    tile('Найкраща конверсія', best ? best.name : '—', best ? `${best.cr}% · ${nf(best.sessions)} сесій` : 'замало даних'),
+    tile('Найбільше відмов', worst ? worst.name : '—', worst ? `${worst.bounceRate}% пішли одразу` : 'замало даних')
+  ]));
+
+  const chRow = (x) => h('tr', {}, [
+    h('td', {}, x.name || x.source || '—'),
+    h('td', { class: 'num' }, nf(x.sessions)),
+    h('td', { class: 'num' }, `${Math.round((x.sessions / total) * 100)}%`),
+    h('td', { class: 'num' }, nf(x.orders)),
+    h('td', { class: 'num' }, x.cr ? h('b', {}, x.cr + '%') : '—'),
+    h('td', { class: 'num' }, x.revenue ? money(x.revenue, cur) : '—'),
+    h('td', { class: 'num' }, x.bounceRate + '%'),
+    h('td', { class: 'num' }, dur(x.dwell * 1000)),
+    h('td', { class: 'num' }, x.friction > 25 ? h('span', { class: 'pill warning' }, String(x.friction)) : String(x.friction))
+  ]);
+  const COLS = ['Канал', { label: 'Сесій', num: 1 }, { label: 'Частка', num: 1 }, { label: 'Замовлень', num: 1 },
+    { label: 'Конверсія', num: 1 }, { label: 'Дохід', num: 1 }, { label: 'Відмови', num: 1 },
+    { label: 'Час', num: 1 }, { label: 'Фрикшн', num: 1 }];
+
+  view.appendChild(h('div', { style: 'margin-top:14px' }, card('Канали', 'згруповано як у звичайній аналітиці: пошук, реклама, соцмережі, прямі заходи',
+    h('div', {}, [
+      barChart(d.channels.slice(0, 8), { labelKey: 'name', valueKey: 'sessions', note: (x) => `конверсія ${x.cr}%` }),
+      table(COLS, d.channels.map(chRow))
+    ]))));
+
+  const srcRow = (x) => h('tr', {}, [
+    h('td', {}, x.source || '—'),
+    h('td', { class: 'mono' }, x.medium || '—'),
+    h('td', { class: 'num' }, nf(x.sessions)),
+    h('td', { class: 'num' }, nf(x.orders)),
+    h('td', { class: 'num' }, x.cr ? h('b', {}, x.cr + '%') : '—'),
+    h('td', { class: 'num' }, x.revenue ? money(x.revenue, cur) : '—'),
+    h('td', { class: 'num' }, x.bounceRate + '%'),
+    h('td', { class: 'num' }, String(x.friction))
+  ]);
+  view.appendChild(h('div', { style: 'margin-top:14px' }, card('Конкретні джерела', 'звідки саме прийшли: сайт-донор і тип переходу',
+    table(['Джерело', 'Тип', { label: 'Сесій', num: 1 }, { label: 'Замовлень', num: 1 }, { label: 'Конверсія', num: 1 },
+      { label: 'Дохід', num: 1 }, { label: 'Відмови', num: 1 }, { label: 'Фрикшн', num: 1 }],
+    d.sources.map(srcRow)))));
+
+  if (d.campaigns.length) {
+    view.appendChild(h('div', { style: 'margin-top:14px' }, card('Рекламні кампанії', 'з міток utm_campaign, utm_source і utm_medium у посиланнях',
+      table(['Кампанія', 'Джерело', { label: 'Сесій', num: 1 }, { label: 'Замовлень', num: 1 }, { label: 'Конверсія', num: 1 }, { label: 'Дохід', num: 1 }, { label: 'Відмови', num: 1 }],
+      d.campaigns.map((x) => h('tr', {}, [
+        h('td', {}, x.campaign),
+        h('td', { class: 'mono' }, `${x.source} / ${x.medium}`),
+        h('td', { class: 'num' }, nf(x.sessions)),
+        h('td', { class: 'num' }, nf(x.orders)),
+        h('td', { class: 'num' }, x.cr ? h('b', {}, x.cr + '%') : '—'),
+        h('td', { class: 'num' }, x.revenue ? money(x.revenue, cur) : '—'),
+        h('td', { class: 'num' }, x.bounceRate + '%')
+      ]))))));
+  }
+
+  if (d.referrers.length) {
+    view.appendChild(h('div', { style: 'margin-top:14px' }, card('Сайти, які на вас посилаються', 'повна адреса сторінки, з якої прийшли',
+      table(['Сторінка-донор', { label: 'Сесій', num: 1 }, { label: 'Замовлень', num: 1 }, { label: 'Конверсія', num: 1 }],
+      d.referrers.map((x) => h('tr', {}, [
+        h('td', { class: 'mono trunc' }, x.referrer),
+        h('td', { class: 'num' }, nf(x.sessions)),
+        h('td', { class: 'num' }, nf(x.orders)),
+        h('td', { class: 'num' }, x.cr ? x.cr + '%' : '—')
+      ]))))));
+  }
+
+  view.appendChild(h('div', { style: 'margin-top:14px' }, card('Сторінки входу', 'на яку сторінку люди потрапляють першою і що з того виходить',
+    table(['Сторінка', { label: 'Сесій', num: 1 }, { label: 'Замовлень', num: 1 }, { label: 'Конверсія', num: 1 }, { label: 'Відмови', num: 1 }, { label: 'Фрикшн', num: 1 }],
+    d.landing.map((x) => h('tr', {}, [
+      h('td', { class: 'mono trunc' }, x.path),
+      h('td', { class: 'num' }, nf(x.sessions)),
+      h('td', { class: 'num' }, nf(x.orders)),
+      h('td', { class: 'num' }, x.cr ? h('b', {}, x.cr + '%') : '—'),
+      h('td', { class: 'num' }, x.bounceRate + '%'),
+      h('td', { class: 'num' }, x.friction > 25 ? h('span', { class: 'pill warning' }, String(x.friction)) : String(x.friction))
+    ]))))));
+}
 
 // Events the site sends itself: cl('event', 'name', {...}) plus everything autoTrack catches.
 async function renderEvents() {
