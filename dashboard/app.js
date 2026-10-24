@@ -724,6 +724,13 @@ async function renderJourney() {
   ]));
 }
 
+const MEDIUM_LABEL = {
+  ai: 'AI-асистент', organic: 'пошук', cpc: 'реклама в пошуку', paid_social: 'реклама в соцмережах',
+  social: 'соцмережа', messenger: 'месенджер', email: 'розсилка', aggregator: 'агрегатор',
+  referral: 'перехід із сайту', none: 'прямий захід'
+};
+const mediumLabel = (m) => MEDIUM_LABEL[m] || m || '—';
+
 // Where visitors come from: channels, exact sources, campaigns, referring sites and
 // landing pages — each with what matters, which is conversion, not just volume.
 async function renderSources() {
@@ -770,9 +777,41 @@ async function renderSources() {
       table(COLS, d.channels.map(chRow))
     ]))));
 
+  const ai = d.ai || { sources: [], total: { sessions: 0 } };
+  const aiCard = h('div', { style: 'margin-top:14px' }, card('Трафік зі штучного інтелекту',
+    'ChatGPT, Perplexity, Gemini, Claude, Copilot та інші асистенти — окремо від звичайного пошуку',
+    h('div', {}, [
+      ai.total.sessions
+        ? h('div', {}, [
+            h('div', { class: 'grid cols-4', style: 'margin-bottom:14px' }, [
+              tile('Сесій з AI', nf(ai.total.sessions), `${Math.round((ai.total.sessions / total) * 1000) / 10}% усього трафіку`),
+              tile('Замовлень', nf(ai.total.orders), ai.total.orders ? `конверсія ${ai.total.cr}%` : 'поки жодного'),
+              tile('Дохід', ai.total.revenue ? money(ai.total.revenue, cur) : '—', 'з візитів через асистентів'),
+              tile('Відмови', ai.total.bounceRate + '%', 'пішли майже одразу')
+            ]),
+            table(['Асистент', { label: 'Сесій', num: 1 }, { label: 'Замовлень', num: 1 }, { label: 'Конверсія', num: 1 },
+              { label: 'Дохід', num: 1 }, { label: 'Відмови', num: 1 }, { label: 'Фрикшн', num: 1 }],
+              ai.sources.map((x) => h('tr', {}, [
+                h('td', {}, x.source),
+                h('td', { class: 'num' }, nf(x.sessions)),
+                h('td', { class: 'num' }, nf(x.orders)),
+                h('td', { class: 'num' }, x.cr ? h('b', {}, x.cr + '%') : '—'),
+                h('td', { class: 'num' }, x.revenue ? money(x.revenue, cur) : '—'),
+                h('td', { class: 'num' }, x.bounceRate + '%'),
+                h('td', { class: 'num' }, String(x.friction))
+              ])))
+          ])
+        : h('div', { class: 'empty' }, 'Переходів з AI-асистентів за цей період не зафіксовано.'),
+      h('p', { class: 'fld-h', style: 'margin-top:12px' },
+        'Це нижня межа, а не точна цифра: частина асистентів не передає, звідки прийшов користувач, '
+        + 'а в мобільних застосунках посилання часто відкривається без цих даних — такі візити потрапляють у «Прямі заходи». '
+        + 'Щоб бачити більше, додавайте до посилань, які ви самі даєте асистентам, мітку utm_source.')
+    ])));
+  view.appendChild(aiCard);
+
   const srcRow = (x) => h('tr', {}, [
     h('td', {}, x.source || '—'),
-    h('td', { class: 'mono' }, x.medium || '—'),
+    h('td', {}, mediumLabel(x.medium)),
     h('td', { class: 'num' }, nf(x.sessions)),
     h('td', { class: 'num' }, nf(x.orders)),
     h('td', { class: 'num' }, x.cr ? h('b', {}, x.cr + '%') : '—'),

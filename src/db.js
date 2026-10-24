@@ -7,6 +7,7 @@ import { gzipSync, gunzipSync } from 'node:zlib';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { SCHEMA, MIGRATIONS } from './schema.js';
+import { classifyHost, normalizeMedium } from './sources.js';
 
 const clean = (args) => args.map((v) => (v === undefined ? null : v));
 
@@ -142,17 +143,27 @@ export function parseUa(ua = '') {
 export function parseSource(referrer = '', search = '') {
   const q = new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
   const utmSource = q.get('utm_source');
-  const utmMedium = q.get('utm_medium');
-  const campaign = q.get('utm_campaign') || q.get('utm_term') || '';
+  const utmMedium = normalizeMedium(q.get('utm_medium'));
+  const campaign = (q.get('utm_campaign') || q.get('utm_term') || '').slice(0, 60);
+  const cut = (v) => String(v || '').slice(0, 40);
+
   if (q.get('gclid')) return { source: 'google', medium: 'cpc', campaign };
   if (q.get('fbclid')) return { source: 'facebook', medium: 'paid_social', campaign };
-  if (utmSource) return { source: utmSource.slice(0, 40), medium: (utmMedium || 'unknown').slice(0, 30), campaign: campaign.slice(0, 60) };
+
+  // A tag the site owner put on the link wins, but what the source actually is still
+  // decides the medium when the tag did not say — "utm_source=chatgpt.com" with no
+  // utm_medium used to land in "unknown".
+  if (utmSource) {
+    const known = classifyHost(utmSource);
+    const paid = utmMedium === 'cpc' || utmMedium === 'paid_social';
+    const medium = paid ? utmMedium : (known || utmMedium || 'referral');
+    return { source: cut(utmSource), medium, campaign };
+  }
+
   if (!referrer) return { source: 'direct', medium: 'none', campaign };
   let host = '';
   try { host = new URL(referrer).hostname.replace(/^www\./, ''); } catch { host = 'unknown'; }
-  if (/google|bing|duckduckgo|yahoo|ecosia|yandex/.test(host)) return { source: host, medium: 'organic', campaign };
-  if (/facebook|instagram|t\.co|twitter|x\.com|tiktok|pinterest|telegram|viber/.test(host)) return { source: host, medium: 'social', campaign };
-  return { source: host.slice(0, 40), medium: 'referral', campaign };
+  return { source: cut(host), medium: classifyHost(host) || 'referral', campaign };
 }
 
 // Daily-rotating salt derived from a secret, so every instance hashes the same way

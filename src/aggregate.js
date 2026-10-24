@@ -1,4 +1,5 @@
 import { unpackSnapshot } from './db.js';
+import { classifyHost, normalizeMedium } from './sources.js';
 
 // Every query is scoped to one site through buildFilter, so the dashboard of one site
 // can never read another's sessions.
@@ -396,17 +397,34 @@ export async function storage(db, siteId = '') {
 // Grouping in the spirit of GA's default channels, but derived from what parseSource
 // already wrote into the session, so nothing new has to be collected.
 const CHANNELS = [
-  { id: 'direct', name: 'Прямі заходи', test: (r) => r.medium === 'none' || r.source === 'direct' },
-  { id: 'organic', name: 'Пошук', test: (r) => r.medium === 'organic' },
-  { id: 'cpc', name: 'Платний пошук', test: (r) => /^(cpc|ppc|paid|paidsearch|paid_search)$/.test(r.medium) },
-  { id: 'paid_social', name: 'Платні соцмережі', test: (r) => r.medium === 'paid_social' },
-  { id: 'social', name: 'Соцмережі', test: (r) => r.medium === 'social' },
-  { id: 'email', name: 'Розсилка', test: (r) => /^(email|e-mail|newsletter)$/.test(r.medium) },
-  { id: 'referral', name: 'Переходи з сайтів', test: (r) => r.medium === 'referral' },
+  { id: 'direct', name: 'Прямі заходи', test: (m, r) => m === 'none' || r.source === 'direct' },
+  { id: 'ai', name: 'AI-асистенти', test: (m) => m === 'ai' },
+  { id: 'organic', name: 'Пошук', test: (m) => m === 'organic' },
+  { id: 'cpc', name: 'Платний пошук', test: (m) => m === 'cpc' },
+  { id: 'paid_social', name: 'Платні соцмережі', test: (m) => m === 'paid_social' },
+  { id: 'social', name: 'Соцмережі', test: (m) => m === 'social' },
+  { id: 'messenger', name: 'Месенджери', test: (m) => m === 'messenger' },
+  { id: 'email', name: 'Розсилка', test: (m) => m === 'email' },
+  { id: 'aggregator', name: 'Прайс-агрегатори', test: (m) => m === 'aggregator' },
+  { id: 'referral', name: 'Переходи з сайтів', test: (m) => m === 'referral' },
   { id: 'other', name: 'Інше', test: () => true }
 ];
 
-const channelOf = (row) => CHANNELS.find((c) => c.test(row)) || CHANNELS[CHANNELS.length - 1];
+const KNOWN_MEDIUM = new Set(['ai', 'organic', 'cpc', 'paid_social', 'social', 'messenger', 'email', 'aggregator', 'none']);
+
+// Sessions recorded before a rule existed carry the medium that was known then — AI
+// assistants, for instance, were written as plain referrals. Rather than rewriting rows,
+// the source host is re-read here, so history regroups itself as the rules improve.
+export function effectiveMedium(row) {
+  const m = normalizeMedium(row.medium);
+  if (KNOWN_MEDIUM.has(m)) return m;
+  return classifyHost(row.source) || m || 'referral';
+}
+
+const channelOf = (row) => {
+  const m = effectiveMedium(row);
+  return CHANNELS.find((c) => c.test(m, row)) || CHANNELS[CHANNELS.length - 1];
+};
 
 const withRates = (r) => ({
   ...r,
@@ -425,9 +443,35 @@ const METRICS = `COUNT(*) sessions, SUM(s.converted) orders, SUM(s.revenue) reve
   SUM(CASE WHEN s.duration < 5000 AND s.pageviews <= 1 THEN 1 ELSE 0 END) bounced`;
 
 export async function trafficSources(db, f) {
-  const rows = (await db.prepare(`SELECT s.source, s.medium, ${METRICS}
+  const raw = (await db.prepare(`SELECT s.source, s.medium, ${METRICS}
     FROM sessions s WHERE ${f.sql} GROUP BY s.source, s.medium
-    ORDER BY sessions DESC LIMIT 200`).all(...f.args)).map(withRates);
+    ORDER BY sessions DESC LIMIT 200`).all(...f.args));
+
+  // Rows written before and after a rule changed carry different mediums for the same
+  // source, so they are folded together once the medium is corrected.
+  const merged = new Map();
+  for (const r of raw) {
+    const medium = effectiveMedium(r);
+    const key = r.source + '|' + medium;
+    const acc = merged.get(key) || { source: r.source, medium, sessions: 0, orders: 0, revenue: 0, bounced: 0, fsum: 0, dsum: 0, psum: 0 };
+    const n = r.sessions || 0;
+    acc.sessions += n;
+    acc.orders += r.orders || 0;
+    acc.revenue += r.revenue || 0;
+    acc.bounced += r.bounced || 0;
+    acc.fsum += (r.friction || 0) * n;
+    acc.dsum += (r.dwell || 0) * n;
+    acc.psum += (r.pages || 0) * n;
+    merged.set(key, acc);
+  }
+  const rows = [...merged.values()]
+    .map((r) => withRates({
+      ...r,
+      friction: r.sessions ? r.fsum / r.sessions : 0,
+      dwell: r.sessions ? r.dsum / r.sessions : 0,
+      pages: r.sessions ? r.psum / r.sessions : 0
+    }))
+    .sort((a, b) => b.sessions - a.sessions);
 
   // Channels are folded from the same rows, so the two tables can never disagree.
   const byChannel = new Map();
@@ -487,7 +531,19 @@ export async function trafficSources(db, f) {
     byDay.set(r.day, row);
   }
 
-  return { channels, sources: rows, campaigns, referrers, landing, daily: [...byDay.values()] };
+  const ai = rows.filter((r) => r.medium === 'ai').sort((a, b) => b.sessions - a.sessions);
+  const aiTotal = ai.reduce((acc, r) => ({
+    sessions: acc.sessions + r.sessions,
+    orders: acc.orders + r.orders,
+    revenue: acc.revenue + r.revenue,
+    bounced: acc.bounced + (r.bounced || 0)
+  }), { sessions: 0, orders: 0, revenue: 0, bounced: 0 });
+
+  return {
+    channels, sources: rows, campaigns, referrers, landing,
+    ai: { sources: ai, total: withRates(aiTotal) },
+    daily: [...byDay.values()]
+  };
 }
 
 // ---------------------------------------------------------------- audience
