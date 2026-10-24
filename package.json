@@ -5,8 +5,12 @@
   "type": "module",
   "description": "Self-hosted conversion diagnostics: funnel, friction tracking and session replay for any website",
   "license": "MIT",
-  "bin": { "conv-lens": "bin/conv-lens.js" },
-  "engines": { "node": ">=22" },
+  "bin": {
+    "conv-lens": "bin/conv-lens.js"
+  },
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "start": "node bin/conv-lens.js serve",
     "demo": "node bin/conv-lens.js seed && node bin/conv-lens.js serve"
