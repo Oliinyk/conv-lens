@@ -289,6 +289,8 @@ export async function handle(req, opts = {}) {
         try { out.real = (await agg.sessionList(db, f, q)).length; }
         catch (e) { out.real = 'ERR: ' + String((e && e.message) || e).slice(0, 180); }
         out.filter = { sql: f.sql, args: f.args };
+        out.optsSeen = { sort: q.sort, only: q.only, limit: q.limit, path: q.path, keys: Object.keys(q) };
+        out.sqlBuilt = agg.__lastSessionSql || null;
         return json(200, out);
       }
       case 'delete': {
