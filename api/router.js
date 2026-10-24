@@ -20,15 +20,17 @@ export default async function handler(req, res) {
   const q = { ...req.query };
   delete q.route;
 
-  // The route comes from the path, not from the catch-all parameter: with rewrites in
-  // vercel.json the platform does not always populate it, and every request then looked
-  // like a request for no route at all.
-  const url = new URL(req.url || '/', 'http://localhost');
-  let route = url.pathname.replace(/^\/+(api|cl)\/+/, '').replace(/^\/+|\/+$/g, '');
+  // Every /api/* and /cl/* path is rewritten here by vercel.json, which passes the original
+  // path in __p. Relying on the platform's own dynamic-segment parameter did not work:
+  // a catch-all matched one segment only, so /api/site/adopt came back 404.
+  const fromRewrite = q.__p;
+  delete q.__p;
+  let route = Array.isArray(fromRewrite) ? fromRewrite.join('/') : String(fromRewrite || '');
   if (!route) {
-    const fromQuery = req.query && req.query.route;
-    route = Array.isArray(fromQuery) ? fromQuery.join('/') : String(fromQuery || '');
+    const url = new URL(req.url || '/', 'http://localhost');
+    route = url.pathname.replace(/^\/+(api|cl)\/+/, '').replace(/^\/+|\/+$/g, '');
   }
+  route = route.replace(/^\/+|\/+$/g, '');
 
   let body = null;
   if (req.method === 'POST' || req.method === 'PUT') {

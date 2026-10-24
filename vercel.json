@@ -1,14 +1,34 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
-    "api/[...route].js": { "includeFiles": "tracker/**", "maxDuration": 60 }
+    "api/router.js": {
+      "includeFiles": "tracker/**",
+      "maxDuration": 60
+    }
   },
   "rewrites": [
-    { "source": "/", "destination": "/dashboard/index.html" },
-    { "source": "/cl/t.js", "destination": "/api/t" },
-    { "source": "/cl/collect", "destination": "/api/collect" }
+    {
+      "source": "/",
+      "destination": "/dashboard/index.html"
+    },
+    {
+      "source": "/cl/:path*",
+      "destination": "/api/router?__p=:path*"
+    },
+    {
+      "source": "/api/:path*",
+      "destination": "/api/router?__p=:path*"
+    }
   ],
   "headers": [
-    { "source": "/(.*)", "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }] }
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        }
+      ]
+    }
   ]
 }
