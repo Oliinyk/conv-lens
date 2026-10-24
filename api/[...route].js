@@ -18,8 +18,17 @@ async function rawBody(req) {
 
 export default async function handler(req, res) {
   const q = { ...req.query };
-  const route = Array.isArray(q.route) ? q.route.join('/') : String(q.route || '');
   delete q.route;
+
+  // The route comes from the path, not from the catch-all parameter: with rewrites in
+  // vercel.json the platform does not always populate it, and every request then looked
+  // like a request for no route at all.
+  const url = new URL(req.url || '/', 'http://localhost');
+  let route = url.pathname.replace(/^\/+(api|cl)\/+/, '').replace(/^\/+|\/+$/g, '');
+  if (!route) {
+    const fromQuery = req.query && req.query.route;
+    route = Array.isArray(fromQuery) ? fromQuery.join('/') : String(fromQuery || '');
+  }
 
   let body = null;
   if (req.method === 'POST' || req.method === 'PUT') {
