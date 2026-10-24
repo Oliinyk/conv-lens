@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conv Lens</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='14' cy='14' r='9' fill='none' stroke='%232a78d6' stroke-width='3'/%3E%3Cpath d='M21 21l7 7' stroke='%232a78d6' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="top-inner">
+    <div class="brand">
+      <span class="dot"></span>
+      <div>
+        <h1>Conv Lens</h1>
+        <small id="siteLabel">чому заходять і не купують</small>
+      </div>
+    </div>
+    <div class="filters">
+      <select id="fSite" aria-label="Сайт" style="display:none"></select>
+      <select id="fRange" aria-label="Період">
+        <option value="7">7 днів</option>
+        <option value="14">14 днів</option>
+        <option value="30" selected>30 днів</option>
+        <option value="90">90 днів</option>
+      </select>
+      <select id="fDevice" aria-label="Пристрій">
+        <option value="">Усі пристрої</option>
+        <option value="mobile">Мобільні</option>
+        <option value="desktop">Десктоп</option>
+        <option value="tablet">Планшети</option>
+      </select>
+      <select id="fSource" aria-label="Канал"><option value="">Усі канали</option></select>
+      <button id="btnTheme" class="ghost" title="Тема">◐</button>
+      <button id="btnReload" class="primary">Оновити</button>
+      <button id="btnLogout" class="ghost" title="Вийти: забути ключ у цьому браузері">Вийти</button>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav class="tabs" id="tabs" role="tablist">
+    <button role="tab" data-tab="overview" aria-selected="true">Огляд</button>
+    <button role="tab" data-tab="insights" aria-selected="false">Діагнози</button>
+    <button role="tab" data-tab="funnel" aria-selected="false">Фунел</button>
+    <button role="tab" data-tab="sessions" aria-selected="false">Записи сесій</button>
+    <button role="tab" data-tab="heat" aria-selected="false">Карта кліків</button>
+    <button role="tab" data-tab="elements" aria-selected="false">Елементи</button>
+    <button role="tab" data-tab="forms" aria-selected="false">Форма</button>
+    <button role="tab" data-tab="speed" aria-selected="false">Швидкість</button>
+    <button role="tab" data-tab="segments" aria-selected="false">Хто не купує</button>
+    <button role="tab" data-tab="survey" aria-selected="false">Опитування</button>
+    <button role="tab" data-tab="events" aria-selected="false">Події</button>
+    <button role="tab" data-tab="settings" aria-selected="false">Налаштування</button>
+  </nav>
+
+  <main id="view"><div class="empty">Завантаження…</div></main>
+</div>
+
+<div class="tooltip" id="tip"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>

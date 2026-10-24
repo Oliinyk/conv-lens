@@ -1,0 +1,17 @@
+{
+  "name": "conv-lens",
+  "version": "2.0.0",
+  "private": false,
+  "type": "module",
+  "description": "Self-hosted conversion diagnostics: funnel, friction tracking and session replay for any website",
+  "license": "MIT",
+  "bin": { "conv-lens": "bin/conv-lens.js" },
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node bin/conv-lens.js serve",
+    "demo": "node bin/conv-lens.js seed && node bin/conv-lens.js serve"
+  },
+  "optionalDependencies": {
+    "@libsql/client": "0.17.4"
+  }
+}
