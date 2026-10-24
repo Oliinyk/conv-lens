@@ -799,7 +799,26 @@ async function renderSources() {
                 h('td', { class: 'num' }, x.revenue ? money(x.revenue, cur) : '—'),
                 h('td', { class: 'num' }, x.bounceRate + '%'),
                 h('td', { class: 'num' }, String(x.friction))
-              ])))
+              ]))),
+            (ai.landing || []).length
+              ? h('div', { style: 'margin-top:22px' }, [
+                  h('h3', { style: 'margin:0 0 4px;font-size:15px' }, 'На які сторінки вони ведуть'),
+                  h('p', { class: 'fld-h', style: 'margin:0 0 10px' },
+                    'Сторінка, з якої почалась сесія — тобто та, яку асистент показав у відповіді. '
+                    + 'Якщо серед них немає тих, що ви просуваєте, асистенти цитують не те.'),
+                  table(['Сторінка', 'Хто привів', { label: 'Сесій', num: 1 }, { label: 'Замовлень', num: 1 },
+                    { label: 'Конверсія', num: 1 }, { label: 'Відмови', num: 1 }, { label: 'Фрикшн', num: 1 }],
+                    ai.landing.map((x) => h('tr', {}, [
+                      h('td', { class: 'mono trunc' }, x.path),
+                      h('td', {}, x.from.map((f) => `${f.source} (${f.sessions})`).join(', ')),
+                      h('td', { class: 'num' }, nf(x.sessions)),
+                      h('td', { class: 'num' }, nf(x.orders)),
+                      h('td', { class: 'num' }, x.cr ? h('b', {}, x.cr + '%') : '—'),
+                      h('td', { class: 'num' }, x.bounceRate + '%'),
+                      h('td', { class: 'num' }, x.friction > 25 ? h('span', { class: 'pill warning' }, String(x.friction)) : String(x.friction))
+                    ])))
+                ])
+              : null
           ])
         : h('div', { class: 'empty' }, 'Переходів з AI-асистентів за цей період не зафіксовано.'),
       h('p', { class: 'fld-h', style: 'margin-top:12px' },

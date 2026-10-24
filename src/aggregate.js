@@ -532,6 +532,34 @@ export async function trafficSources(db, f) {
   }
 
   const ai = rows.filter((r) => r.medium === 'ai').sort((a, b) => b.sessions - a.sessions);
+
+  // Which pages assistants actually send people to. The set of AI sources is decided in JS
+  // (a session may be stored under an older medium), so it is passed back into SQL by name.
+  let aiLanding = [];
+  if (ai.length) {
+    const names = ai.map((r) => r.source).slice(0, 40);
+    const marks = names.map(() => '?').join(',');
+    const rowsL = (await db.prepare(`SELECT s.entry_path path, s.source, ${METRICS}
+      FROM sessions s WHERE ${f.sql} AND s.source IN (${marks}) AND COALESCE(s.entry_path, '') != ''
+      GROUP BY s.entry_path, s.source ORDER BY sessions DESC LIMIT 120`).all(...f.args, ...names)).map(withRates);
+
+    const byPath = new Map();
+    for (const r of rowsL) {
+      const acc = byPath.get(r.path) || { path: r.path, sessions: 0, orders: 0, revenue: 0, bounced: 0, fsum: 0, from: [] };
+      acc.sessions += r.sessions;
+      acc.orders += r.orders;
+      acc.revenue += r.revenue;
+      acc.bounced += r.bounced || 0;
+      acc.fsum += (r.friction || 0) * r.sessions;
+      acc.from.push({ source: r.source, sessions: r.sessions });
+      byPath.set(r.path, acc);
+    }
+    aiLanding = [...byPath.values()]
+      .map((r) => withRates({ ...r, friction: r.sessions ? r.fsum / r.sessions : 0 }))
+      .map((r) => ({ ...r, from: r.from.sort((a, b) => b.sessions - a.sessions) }))
+      .sort((a, b) => b.sessions - a.sessions)
+      .slice(0, 25);
+  }
   const aiTotal = ai.reduce((acc, r) => ({
     sessions: acc.sessions + r.sessions,
     orders: acc.orders + r.orders,
@@ -541,7 +569,7 @@ export async function trafficSources(db, f) {
 
   return {
     channels, sources: rows, campaigns, referrers, landing,
-    ai: { sources: ai, total: withRates(aiTotal) },
+    ai: { sources: ai, total: withRates(aiTotal), landing: aiLanding },
     daily: [...byDay.values()]
   };
 }
