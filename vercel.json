@@ -6,11 +6,14 @@
       "maxDuration": 60
     }
   },
-  "rewrites": [
+  "redirects": [
     {
       "source": "/",
-      "destination": "/dashboard/index.html"
-    },
+      "destination": "/dashboard/",
+      "permanent": false
+    }
+  ],
+  "rewrites": [
     {
       "source": "/cl/:__clpath*",
       "destination": "/api/router?__p=:__clpath*"
