@@ -4,7 +4,12 @@ const tip = () => document.getElementById('tip');
 export function s(tag, attrs = {}, kids = []) {
   const n = document.createElementNS(NS, tag);
   for (const k in attrs) if (attrs[k] != null) n.setAttribute(k, attrs[k]);
-  (Array.isArray(kids) ? kids : [kids]).forEach((c) => c && n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c));
+  // Numbers are as valid a child as strings here; anything that is not a node becomes text,
+  // so one forgotten String() cannot take a whole tab down.
+  (Array.isArray(kids) ? kids : [kids]).forEach((c) => {
+    if (c == null || c === false || c === '') return;
+    n.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
+  });
   return n;
 }
 export function h(tag, attrs = {}, kids = []) {
@@ -15,7 +20,12 @@ export function h(tag, attrs = {}, kids = []) {
     else if (k.startsWith('on')) n.addEventListener(k.slice(2), attrs[k]);
     else if (attrs[k] != null) n.setAttribute(k, attrs[k]);
   }
-  (Array.isArray(kids) ? kids : [kids]).forEach((c) => c && n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c));
+  // Numbers are as valid a child as strings here; anything that is not a node becomes text,
+  // so one forgotten String() cannot take a whole tab down.
+  (Array.isArray(kids) ? kids : [kids]).forEach((c) => {
+    if (c == null || c === false || c === '') return;
+    n.appendChild(c instanceof Node ? c : document.createTextNode(String(c)));
+  });
   return n;
 }
 

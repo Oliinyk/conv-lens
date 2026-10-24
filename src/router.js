@@ -192,12 +192,27 @@ export async function handle(req, opts = {}) {
   const f = agg.buildFilter({ ...q, siteId: site.id });
   try {
     switch (route) {
-      case 'overview': return json(200, {
-        overview: await agg.overview(db, cfg, f), funnel: await agg.funnel(db, cfg, f),
-        devices: await agg.deviceBreakdown(db, f), exits: await agg.exitPaths(db, f),
-        range: { from: f.from, to: f.to },
-        config: { currency: cfg.currency, siteUrl: cfg.siteUrl, funnel: cfg.funnel, name: cfg.name, storage: storageKind() }
-      });
+      case 'overview': {
+        const out = {
+          overview: await agg.overview(db, cfg, f), funnel: await agg.funnel(db, cfg, f),
+          devices: await agg.deviceBreakdown(db, f), exits: await agg.exitPaths(db, f),
+          range: { from: f.from, to: f.to },
+          config: { currency: cfg.currency, siteUrl: cfg.siteUrl, funnel: cfg.funnel, name: cfg.name, storage: storageKind() }
+        };
+        // The same window, shifted back by its own length: "last 30 days vs the 30 before".
+        if (q.compare) {
+          const span = f.to - f.from;
+          const prev = agg.buildFilter({ ...q, siteId: site.id, from: f.from - span, to: f.from });
+          out.previous = {
+            overview: await agg.overview(db, cfg, prev),
+            funnel: await agg.funnel(db, cfg, prev),
+            range: { from: prev.from, to: prev.to }
+          };
+        }
+        return json(200, out);
+      }
+      case 'audience': return json(200, { ...(await agg.audience(db, f)), currency: cfg.currency });
+      case 'journey': return json(200, await agg.journeys(db, f));
       case 'insights': return json(200, await buildInsights(db, cfg, f));
       case 'funnel': return json(200, await agg.funnel(db, cfg, f));
       case 'sessions': return json(200, { sessions: await agg.sessionList(db, f, q), funnel: cfg.funnel });

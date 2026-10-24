@@ -104,6 +104,14 @@ export async function seed(db, cfg, opts = {}) {
   const perDay = opts.perDay || 64;
   const now = Date.now();
   let made = 0, orders = 0;
+  // A pool of known visitors so some sessions are people coming back, not only first-timers.
+  const visitors = [];
+  const GEO = [
+    { country: 'UA', region: '30', cities: ['Kyiv', 'Lviv', 'Odesa', 'Kharkiv', 'Dnipro'], w: 62 },
+    { country: 'PL', region: '14', cities: ['Warsaw', 'Krakow', 'Wroclaw'], w: 16 },
+    { country: 'DE', region: 'BE', cities: ['Berlin', 'Munich', 'Hamburg'], w: 14 },
+    { country: 'CZ', region: '10', cities: ['Prague', 'Brno'], w: 8 }
+  ];
 
   for (let d = days - 1; d >= 0; d--) {
     const dayStart = now - d * 86400000 - 14 * 3600000;
@@ -116,7 +124,13 @@ export async function seed(db, cfg, opts = {}) {
       const vh = device === 'mobile' ? pick([664, 844, 915]) : 900;
       const src = weighted(REFS);
       const t0 = dayStart + int(0, 13) * 3600000 + int(0, 59) * 60000;
-      const sid = uid(), vid = uid();
+      const sid = uid();
+      // A returning visitor reuses an id from an earlier day, so "new vs returning" is real.
+      const back = visitors.length > 12 && chance(0.3);
+      const vid = back ? visitors[int(0, visitors.length - 1)] : uid();
+      if (!back) visitors.push(vid);
+      const geo = weighted(GEO);
+      const city = pick(geo.cities);
       const model = pick(MODELS);
       const isFb = /facebook/.test(src.ref);
       const slowDay = d > 9;
@@ -290,7 +304,10 @@ export async function seed(db, cfg, opts = {}) {
           path, ref: src.ref, title: 'CHRONO.UA', lang: 'uk-UA', ua,
           dev: device, vw, vh, touch: device !== 'desktop', startedAt: t0, items: events
         };
-        await ingestBatch(db, cfg, env, { ip: '203.0.113.' + int(1, 254), ua, country: pick(['UA', 'UA', 'UA', 'PL', 'DE']) });
+        await ingestBatch(db, cfg, env, {
+          ip: '203.0.113.' + int(1, 254), ua,
+          country: geo.country, city: city, region: geo.region
+        });
         made++;
       }
     }

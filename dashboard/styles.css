@@ -309,3 +309,16 @@ textarea.inp { resize: vertical; line-height: 1.5; }
 .inst { margin: 0 0 14px; padding: 10px 13px; border-radius: 9px; font-size: 13.5px; line-height: 1.5; }
 .inst.ok { background: color-mix(in srgb, var(--good) 12%, transparent); border: 1px solid color-mix(in srgb, var(--good) 35%, transparent); }
 .inst.wait { background: color-mix(in srgb, var(--warning) 14%, transparent); border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent); }
+
+/* ---------- period comparison ---------- */
+.dlt { font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dlt.good { color: var(--good); }
+.dlt.bad { color: var(--critical); }
+.dlt.flat, .dlt.new { color: var(--muted); font-weight: 500; }
+.cmp-note {
+  margin: 0 0 12px; padding: 9px 13px; border-radius: 9px; font-size: 13px; color: var(--text-2);
+  background: var(--surface-3); border: 1px solid var(--border);
+}
+#btnCompare.on { background: var(--series-1); border-color: var(--series-1); color: #fff; }
+.fn-cmp { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 12.5px; color: var(--text-2); }
+.fn-cmp b { font-weight: 560; color: var(--text); }

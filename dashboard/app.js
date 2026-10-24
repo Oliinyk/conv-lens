@@ -16,7 +16,7 @@ let KEY = readKey();
   if (fromUrl) { KEY = fromUrl; saveKey(fromUrl); u.searchParams.delete('key'); history.replaceState(null, '', u.pathname + u.search + u.hash); }
 }
 class AuthError extends Error {}
-const state = { tab: 'overview', days: 30, device: '', source: '', currency: '', cache: {}, player: null, site: '', sites: [], presets: [] };
+const state = { tab: 'overview', days: 30, device: '', source: '', currency: '', cache: {}, player: null, site: '', sites: [], presets: [], compare: false };
 
 async function api(path, params = {}) {
   const q = new URLSearchParams({
@@ -45,6 +45,22 @@ async function apiPost(path, body = {}) {
 }
 
 const SEV_LABEL = { critical: 'критично', serious: 'серйозно', warning: 'увага', info: 'інфо' };
+
+// Change against the previous period of the same length. `up` says whether growth is good,
+// so a rising bounce rate is red and a rising conversion is green.
+function delta(now, before, up = true, suffix = '') {
+  if (before == null || !isFinite(before) || (!before && !now)) return null;
+  const diff = now - before;
+  if (!before) return h('span', { class: 'dlt new' }, 'нове');
+  const pctChange = Math.round((diff / Math.abs(before)) * 1000) / 10;
+  if (Math.abs(pctChange) < 0.5) return h('span', { class: 'dlt flat' }, 'без змін');
+  const good = up ? diff > 0 : diff < 0;
+  const arrow = diff > 0 ? '▲' : '▼';
+  const abs = suffix ? `${diff > 0 ? '+' : ''}${Math.round(diff * 10) / 10}${suffix}` : `${pctChange > 0 ? '+' : ''}${pctChange}%`;
+  return h('span', { class: 'dlt ' + (good ? 'good' : 'bad'), title: `було ${nf(before)}${suffix}` }, `${arrow} ${abs}`);
+}
+
+const withDelta = (node, text) => (node ? h('span', {}, [node, ' · ' + text]) : text);
 
 function tile(label, value, sub, cls = '') {
   return h('div', { class: 'card tile ' + cls }, [
@@ -96,24 +112,44 @@ function showLogin(wrong) {
 function logout() { KEY = ''; saveKey(''); showLogin(false); }
 
 async function renderOverview() {
-  const d = await api('overview');
+  const d = await api('overview', state.compare ? { compare: '1' } : {});
   const ins = await api('insights');
   state.currency = d.overview.currency;
   const o = d.overview;
+  // Comparing against a window with no data would only produce nonsense arrows.
+  const p = d.previous && d.previous.overview.sessions > 0 ? d.previous.overview : null;
   view.innerHTML = '';
 
+  if (state.compare) {
+    const r = d.previous ? d.previous.range : null;
+    const fmt = (ms) => new Date(ms).toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit' });
+    view.appendChild(h('div', { class: 'cmp-note' }, p
+      ? `Порівняння з попереднім періодом: ${fmt(r.from)} – ${fmt(r.to)}, ${nf(p.sessions)} сесій.`
+      : 'За попередній період даних ще немає — порівнювати нема з чим.'));
+  }
+
   view.appendChild(h('div', { class: 'grid cols-4', style: 'margin-bottom:14px' }, [
-    tile('Люди', nf(o.visitors), `${nf(o.sessions)} сесій · ${nf(o.ips || 0)} різних IP`, 'hero'),
+    tile('Люди', nf(o.visitors), withDelta(p && delta(o.visitors, p.visitors), `${nf(o.sessions)} сесій · ${nf(o.ips || 0)} різних IP`), 'hero'),
     tile('Оцінка втрат', money(ins.estimatedLost.low, o.currency), 'нижня межа, причини перетинаються'),
-    tile('Конверсія', o.cr + '%', `${nf(o.orders)} замовлень з ${nf(o.sessions)} сесій`),
-    tile('Пішли майже одразу', o.bounceRate + '%', `до 5 с і без скролу`),
-    tile('Середній фрикшн', o.avgFriction + '/100', 'індекс складнощів у сесії'),
-    tile('Сесії з rage-кліками', nf(o.withRage), `${Math.round((o.withRage / Math.max(o.sessions, 1)) * 100)}% усіх сесій`),
-    tile('Сесії з JS-помилкою', nf(o.withJsError), `запити падали у ${nf(o.withNetError)}`),
-    tile('Середня глибина скролу', o.avgDepth + '%', `${o.avgPageviews} сторінок, ${o.avgDuration} с`)
+    tile('Конверсія', o.cr + '%', withDelta(p && delta(o.cr, p.cr, true, ' п.п.'), `${nf(o.orders)} замовлень з ${nf(o.sessions)} сесій`)),
+    tile('Пішли майже одразу', o.bounceRate + '%', withDelta(p && delta(o.bounceRate, p.bounceRate, false, ' п.п.'), 'до 5 с і без скролу')),
+    tile('Середній фрикшн', o.avgFriction + '/100', withDelta(p && delta(o.avgFriction, p.avgFriction, false), 'індекс складнощів у сесії')),
+    tile('Сесії з rage-кліками', nf(o.withRage), withDelta(p && delta(o.withRage, p.withRage, false), `${Math.round((o.withRage / Math.max(o.sessions, 1)) * 100)}% усіх сесій`)),
+    tile('Сесії з JS-помилкою', nf(o.withJsError), withDelta(p && delta(o.withJsError, p.withJsError, false), `запити падали у ${nf(o.withNetError)}`)),
+    tile('Середня глибина скролу', o.avgDepth + '%', withDelta(p && delta(o.avgDepth, p.avgDepth, true, ' п.п.'), `${o.avgPageviews} сторінок, ${o.avgDuration} с`))
   ]));
 
-  view.appendChild(card('Фунел продажу', `${nf(d.funnel.total)} сесій у вибірці`, funnelChart(d.funnel.steps, d.funnel.total)));
+  const fnPrev = d.previous ? d.previous.funnel : null;
+  view.appendChild(card('Фунел продажу',
+    `${nf(d.funnel.total)} сесій у вибірці`,
+    h('div', {}, [
+      funnelChart(d.funnel.steps, d.funnel.total),
+      fnPrev && p ? h('div', { class: 'fn-cmp' }, d.funnel.steps.map((st, i) => {
+        const was = fnPrev.steps[i];
+        const dd = was ? delta(st.shareOfTotal, was.shareOfTotal, true, ' п.п.') : null;
+        return h('span', {}, [h('b', {}, st.name), ' ', dd || h('span', { class: 'dlt flat' }, '—')]);
+      })) : null
+    ])));
 
   view.appendChild(h('div', { class: 'grid cols-2', style: 'margin-top:14px' }, [
     card('Сесії по днях', null, lineChart(o.daily, { xKey: 'day', yKey: 'sessions', label: 'Сесій' })),
@@ -510,9 +546,169 @@ const TABS = {
   overview: renderOverview, insights: renderInsights, funnel: renderFunnel,
   sessions: renderSessions, heat: renderHeat, elements: renderElements,
   forms: renderForms, speed: renderSpeed, segments: renderSegments, survey: renderSurvey,
-  sources: renderSources,
+  sources: renderSources, audience: renderAudience, journey: renderJourney,
   events: renderEvents, settings: renderSettingsTab
 };
+
+// Who comes: first-timers against people who came back, and where they are.
+async function renderAudience() {
+  const d = await api('audience');
+  const cur = d.currency || state.currency || '';
+  const n = d.new, r = d.returning;
+  const total = n.sessions + r.sessions;
+  view.innerHTML = '';
+
+  if (!total) {
+    view.appendChild(h('div', { class: 'empty' }, 'За цей період ще немає візитів.'));
+    return;
+  }
+
+  const share = (x) => Math.round((x / total) * 100) + '%';
+  view.appendChild(h('div', { class: 'grid cols-4', style: 'margin-bottom:14px' }, [
+    tile('Нові', nf(n.sessions), `${share(n.sessions)} сесій · конверсія ${n.cr}%`),
+    tile('Повернулись', nf(r.sessions), `${share(r.sessions)} сесій · конверсія ${r.cr}%`),
+    tile('Різниця в конверсії', r.cr || n.cr ? (Math.round((r.cr - n.cr) * 10) / 10 > 0 ? '+' : '') + Math.round((r.cr - n.cr) * 10) / 10 + ' п.п.' : '—',
+      r.cr > n.cr ? 'повторні купують охочіше' : r.cr < n.cr ? 'повторні купують гірше' : 'однаково'),
+    tile('Дохід від повторних', money(r.revenue, cur), `з усіх ${money(n.revenue + r.revenue, cur)}`)
+  ]));
+
+  const kindRow = (x, label) => h('tr', {}, [
+    h('td', {}, label),
+    h('td', { class: 'num' }, nf(x.sessions)),
+    h('td', { class: 'num' }, share(x.sessions)),
+    h('td', { class: 'num' }, nf(x.orders)),
+    h('td', { class: 'num' }, x.cr ? h('b', {}, x.cr + '%') : '—'),
+    h('td', { class: 'num' }, x.revenue ? money(x.revenue, cur) : '—'),
+    h('td', { class: 'num' }, x.bounceRate + '%'),
+    h('td', { class: 'num' }, String(x.pages)),
+    h('td', { class: 'num' }, dur(x.dwell * 1000)),
+    h('td', { class: 'num' }, String(x.friction))
+  ]);
+  view.appendChild(card('Нові проти тих, хто повернувся', 'повторним уже не треба знайомитись із сайтом — якщо вони купують не краще, справа не в довірі',
+    table(['Хто', { label: 'Сесій', num: 1 }, { label: 'Частка', num: 1 }, { label: 'Замовлень', num: 1 }, { label: 'Конверсія', num: 1 },
+      { label: 'Дохід', num: 1 }, { label: 'Відмови', num: 1 }, { label: 'Сторінок', num: 1 }, { label: 'Час', num: 1 }, { label: 'Фрикшн', num: 1 }],
+    [kindRow(n, 'Перший візит'), kindRow(r, 'Повернулись')])));
+
+  if (d.visitBuckets.length) {
+    const buckets = d.visitBuckets.map((b) => ({ ...b, label: b.bucket === '1' ? '1 візит' : b.bucket === '2' ? '2 візити' : b.bucket + ' візитів' }));
+    view.appendChild(h('div', { style: 'margin-top:14px' }, card('Скільки разів люди приходили', 'рахуються всі візити людини за весь час, не лише в цьому періоді',
+      h('div', {}, [
+        barChart(buckets, { labelKey: 'label', valueKey: 'visitors', note: (x) => `${nf(x.buyers || 0)} з них купили` }),
+        table(['Візитів', { label: 'Людей', num: 1 }, { label: 'З них купили', num: 1 }, { label: 'Частка покупців', num: 1 }],
+          buckets.map((b) => h('tr', {}, [
+            h('td', {}, b.label),
+            h('td', { class: 'num' }, nf(b.visitors)),
+            h('td', { class: 'num' }, nf(b.buyers || 0)),
+            h('td', { class: 'num' }, b.visitors ? Math.round(((b.buyers || 0) / b.visitors) * 1000) / 10 + '%' : '—')
+          ])))
+      ]))));
+  }
+
+  const geoRow = (x, name) => h('tr', {}, [
+    h('td', {}, name),
+    h('td', { class: 'num' }, nf(x.sessions)),
+    h('td', { class: 'num' }, nf(x.orders)),
+    h('td', { class: 'num' }, x.cr ? h('b', {}, x.cr + '%') : '—'),
+    h('td', { class: 'num' }, x.revenue ? money(x.revenue, cur) : '—'),
+    h('td', { class: 'num' }, x.bounceRate + '%'),
+    h('td', { class: 'num' }, x.friction > 25 ? h('span', { class: 'pill warning' }, String(x.friction)) : String(x.friction))
+  ]);
+  const GEO_COLS = ['Місце', { label: 'Сесій', num: 1 }, { label: 'Замовлень', num: 1 }, { label: 'Конверсія', num: 1 },
+    { label: 'Дохід', num: 1 }, { label: 'Відмови', num: 1 }, { label: 'Фрикшн', num: 1 }];
+
+  view.appendChild(h('div', { style: 'margin-top:14px' }, card('Країни', 'визначається на боці сервера, VPN і проксі можуть збивати',
+    h('div', {}, [
+      barChart(d.countries.slice(0, 8), { labelKey: 'country', valueKey: 'sessions', note: (x) => `конверсія ${x.cr}%` }),
+      table(GEO_COLS, d.countries.map((x) => geoRow(x, x.country)))
+    ]))));
+
+  if (d.cities.length) {
+    view.appendChild(h('div', { style: 'margin-top:14px' }, card('Міста', 'корисно, коли конверсія падає там, куди погано їде доставка',
+      table(GEO_COLS, d.cities.map((x) => geoRow(x, `${x.city}${x.country ? ', ' + x.country : ''}`))))));
+  } else {
+    view.appendChild(h('div', { style: 'margin-top:14px' }, card('Міста', null,
+      h('div', { class: 'empty' }, 'Місто визначає хостинг, на якому працює Conv Lens. На Vercel воно є одразу; на своєму сервері потрібен заголовок від CDN.'))));
+  }
+
+  view.appendChild(h('div', { class: 'grid cols-2', style: 'margin-top:14px' }, [
+    card('Браузери і системи', 'дивіться на фрикшн: він видає зламану верстку в конкретному браузері',
+      table(['Браузер', { label: 'Сесій', num: 1 }, { label: 'Конверсія', num: 1 }, { label: 'Фрикшн', num: 1 }],
+        d.browsers.map((x) => h('tr', {}, [
+          h('td', {}, `${x.browser} · ${x.os}`),
+          h('td', { class: 'num' }, nf(x.sessions)),
+          h('td', { class: 'num' }, x.cr ? x.cr + '%' : '—'),
+          h('td', { class: 'num' }, x.friction > 25 ? h('span', { class: 'pill warning' }, String(x.friction)) : String(x.friction))
+        ])))),
+    card('Мова браузера', 'підказує, чи потрібна версія сайту іншою мовою',
+      table(['Мова', { label: 'Сесій', num: 1 }, { label: 'Конверсія', num: 1 }],
+        d.languages.map((x) => h('tr', {}, [
+          h('td', { class: 'mono' }, x.lang),
+          h('td', { class: 'num' }, nf(x.sessions)),
+          h('td', { class: 'num' }, x.cr ? x.cr + '%' : '—')
+        ]))))
+  ]));
+}
+
+// Where people go from page to page, where they drop out, and where they go in circles.
+async function renderJourney() {
+  const d = await api('journey');
+  view.innerHTML = '';
+
+  if (!d.transitions.length && !d.exits.length) {
+    view.appendChild(h('div', { class: 'empty' }, 'Переходів між сторінками ще не було: у всіх сесіях лише одна сторінка.'));
+    return;
+  }
+
+  const onePage = (d.steps.find((s) => s.pages === 1) || { sessions: 0 }).sessions;
+  const allSteps = d.steps.reduce((a, s) => a + s.sessions, 0);
+  const deepest = d.steps.length ? d.steps[d.steps.length - 1].pages : 0;
+  view.appendChild(h('div', { class: 'grid cols-4', style: 'margin-bottom:14px' }, [
+    tile('Переглядів однієї сторінки', allSteps ? Math.round((onePage / allSteps) * 100) + '%' : '—', `${nf(onePage)} сесій не пішли далі`),
+    tile('Найглибша сесія', deepest ? deepest + ' сторінок' : '—', 'скільки сторінок встигли подивитись'),
+    tile('Різних переходів', nf(d.transitions.length), 'між якими сторінками ходять'),
+    tile('Петель', nf(d.loops.length), d.loops.length ? 'місця, де люди вертаються назад' : 'люди не ходять колами')
+  ]));
+
+  view.appendChild(card('Куди йдуть зі сторінки', 'найчастіші переходи; якщо потрібного переходу тут немає — його не знаходять',
+    table(['Зі сторінки', 'На сторінку', { label: 'Разів', num: 1 }, { label: 'Сесій', num: 1 }],
+      d.transitions.map((t) => h('tr', {}, [
+        h('td', { class: 'mono trunc' }, t.path),
+        h('td', { class: 'mono trunc' }, t.next),
+        h('td', { class: 'num' }, nf(t.n)),
+        h('td', { class: 'num' }, nf(t.sessions))
+      ])))));
+
+  view.appendChild(h('div', { style: 'margin-top:14px' }, card('Де сесія обривається', 'частка переглядів сторінки, після яких людина пішла з сайту',
+    table(['Сторінка', { label: 'Переглядів', num: 1 }, { label: 'Виходів', num: 1 }, { label: 'Частка виходів', num: 1 }],
+      d.exits.map((e) => h('tr', {}, [
+        h('td', { class: 'mono trunc' }, e.path),
+        h('td', { class: 'num' }, nf(e.total)),
+        h('td', { class: 'num' }, nf(e.exits)),
+        h('td', { class: 'num' }, e.exitRate > 70 ? h('span', { class: 'pill critical' }, e.exitRate + '%') : e.exitRate + '%')
+      ]))))));
+
+  if (d.loops.length) {
+    view.appendChild(h('div', { style: 'margin-top:14px' }, card('Ходять колами', 'пішли зі сторінки і одразу повернулись на неї — зазвичай не знайшли того, по що йшли',
+      table(['Зі сторінки', 'Заглянули в', { label: 'Сесій', num: 1 }, { label: 'Разів', num: 1 }],
+        d.loops.map((l) => h('tr', {}, [
+          h('td', { class: 'mono trunc' }, l.a),
+          h('td', { class: 'mono trunc' }, l.b),
+          h('td', { class: 'num' }, nf(l.sessions)),
+          h('td', { class: 'num' }, nf(l.n))
+        ]))))));
+  }
+
+  view.appendChild(h('div', { class: 'grid cols-2', style: 'margin-top:14px' }, [
+    card('З якої сторінки починають', null,
+      table(['Сторінка', { label: 'Сесій', num: 1 }],
+        d.entries.map((e) => h('tr', {}, [h('td', { class: 'mono trunc' }, e.path), h('td', { class: 'num' }, nf(e.n))])))),
+    card('Скільки сторінок за сесію', null,
+      d.steps.length
+        ? barChart(d.steps.map((s) => ({ label: s.pages + (s.pages === 1 ? ' сторінка' : ' сторінок'), sessions: s.sessions })),
+            { labelKey: 'label', valueKey: 'sessions' })
+        : h('div', { class: 'empty' }, 'Немає даних'))
+  ]));
+}
 
 // Where visitors come from: channels, exact sources, campaigns, referring sites and
 // landing pages — each with what matters, which is conversion, not just volume.
@@ -661,6 +857,13 @@ document.getElementById('fRange').addEventListener('change', (e) => { state.days
 document.getElementById('fDevice').addEventListener('change', (e) => { state.device = e.target.value; renderTab(); });
 document.getElementById('fSource').addEventListener('change', (e) => { state.source = e.target.value; renderTab(); });
 document.getElementById('btnReload').addEventListener('click', renderTab);
+document.getElementById('btnCompare').addEventListener('click', (e) => {
+  state.compare = !state.compare;
+  e.target.setAttribute('aria-pressed', String(state.compare));
+  e.target.classList.toggle('on', state.compare);
+  if (state.tab === 'overview') renderTab();
+  else switchTab('overview');
+});
 document.getElementById('fSite').addEventListener('change', (e) => {
   state.site = e.target.value;
   state.cache = {};

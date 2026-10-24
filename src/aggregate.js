@@ -489,3 +489,93 @@ export async function trafficSources(db, f) {
 
   return { channels, sources: rows, campaigns, referrers, landing, daily: [...byDay.values()] };
 }
+
+// ---------------------------------------------------------------- audience
+// Who the visitors are: first-timers vs people who came back, and where they are.
+// "Returning" means the visitor was seen before this session at any point in the
+// site's history, not just inside the selected period — otherwise a narrow window
+// would call everyone new.
+export async function audience(db, f) {
+  const siteScope = f.siteId ? 'WHERE site_id = ?' : '';
+  const firstArgs = f.siteId ? [f.siteId] : [];
+  const FIRSTS = `firsts AS (SELECT visitor_id, MIN(started_at) first_at FROM sessions ${siteScope} GROUP BY visitor_id)`;
+
+  const kinds = (await db.prepare(`WITH ${FIRSTS}
+    SELECT CASE WHEN s.started_at > fi.first_at THEN 'returning' ELSE 'new' END kind, ${METRICS}
+    FROM sessions s JOIN firsts fi ON fi.visitor_id = s.visitor_id
+    WHERE ${f.sql} GROUP BY kind`).all(...firstArgs, ...f.args)).map(withRates);
+
+  const nw = kinds.find((k) => k.kind === 'new') || { sessions: 0, orders: 0, revenue: 0, cr: 0, bounceRate: 0, friction: 0, dwell: 0, pages: 0 };
+  const ret = kinds.find((k) => k.kind === 'returning') || { sessions: 0, orders: 0, revenue: 0, cr: 0, bounceRate: 0, friction: 0, dwell: 0, pages: 0 };
+
+  // How many times the people active in this period have been here in total.
+  const visitBuckets = (await db.prepare(`WITH seen AS (
+      SELECT s.visitor_id, (SELECT COUNT(*) FROM sessions v WHERE v.visitor_id = s.visitor_id${f.siteId ? ' AND v.site_id = ?' : ''}) n,
+             MAX(s.converted) bought
+      FROM sessions s WHERE ${f.sql} GROUP BY s.visitor_id)
+    SELECT CASE WHEN n = 1 THEN '1' WHEN n = 2 THEN '2' WHEN n <= 5 THEN '3–5' ELSE '6+' END bucket,
+      COUNT(*) visitors, SUM(bought) buyers
+    FROM seen GROUP BY bucket`).all(...firstArgs, ...f.args));
+  const order = { '1': 0, '2': 1, '3–5': 2, '6+': 3 };
+  visitBuckets.sort((a, b) => order[a.bucket] - order[b.bucket]);
+
+  const countries = (await db.prepare(`SELECT COALESCE(NULLIF(s.country, ''), '—') country, ${METRICS}
+    FROM sessions s WHERE ${f.sql} GROUP BY country ORDER BY sessions DESC LIMIT 30`).all(...f.args)).map(withRates);
+
+  const cities = (await db.prepare(`SELECT COALESCE(NULLIF(s.city, ''), '—') city,
+      COALESCE(NULLIF(s.region, ''), '') region, COALESCE(NULLIF(s.country, ''), '') country, ${METRICS}
+    FROM sessions s WHERE ${f.sql} AND COALESCE(s.city, '') != ''
+    GROUP BY city, region, country ORDER BY sessions DESC LIMIT 30`).all(...f.args)).map(withRates);
+
+  const browsers = (await db.prepare(`SELECT s.browser, s.os, ${METRICS}
+    FROM sessions s WHERE ${f.sql} GROUP BY s.browser, s.os ORDER BY sessions DESC LIMIT 20`).all(...f.args)).map(withRates);
+
+  const languages = (await db.prepare(`SELECT COALESCE(NULLIF(s.lang, ''), '—') lang, ${METRICS}
+    FROM sessions s WHERE ${f.sql} GROUP BY lang ORDER BY sessions DESC LIMIT 12`).all(...f.args)).map(withRates);
+
+  return { new: { ...nw, kind: 'new' }, returning: { ...ret, kind: 'returning' }, visitBuckets, countries, cities, browsers, languages };
+}
+
+// ---------------------------------------------------------------- page journeys
+// Where people go from each page, where they leave, and where they go in circles.
+export async function journeys(db, f) {
+  const PV = `pv AS (
+    SELECT e.session_id, e.ts, e.seq, e.path,
+      LAG(e.path) OVER (PARTITION BY e.session_id ORDER BY e.ts, e.seq) prev,
+      LEAD(e.path) OVER (PARTITION BY e.session_id ORDER BY e.ts, e.seq) next
+    FROM events e JOIN sessions s ON s.id = e.session_id
+    WHERE ${f.sql} AND e.type = 'pageview')`;
+
+  const transitions = await db.prepare(`WITH ${PV}
+    SELECT path, next, COUNT(*) n, COUNT(DISTINCT session_id) sessions
+    FROM pv WHERE next IS NOT NULL AND next != path
+    GROUP BY path, next ORDER BY n DESC LIMIT 60`).all(...f.args);
+
+  // A page is an exit when nothing followed it in that session.
+  const exits = await db.prepare(`WITH ${PV}
+    SELECT path, COUNT(*) total, SUM(CASE WHEN next IS NULL THEN 1 ELSE 0 END) exits
+    FROM pv GROUP BY path HAVING total >= 3 ORDER BY exits DESC LIMIT 25`).all(...f.args);
+
+  // Going A → B → A is the signature of not finding something: people bounce back
+  // and forth between a listing and a card, or between cart and product.
+  const loops = await db.prepare(`WITH ${PV}
+    SELECT prev a, path b, COUNT(*) n, COUNT(DISTINCT session_id) sessions
+    FROM pv WHERE prev IS NOT NULL AND next IS NOT NULL AND prev = next AND prev != path
+    GROUP BY a, b ORDER BY sessions DESC LIMIT 20`).all(...f.args);
+
+  const entries = await db.prepare(`WITH ${PV}
+    SELECT path, COUNT(*) n FROM pv WHERE prev IS NULL GROUP BY path ORDER BY n DESC LIMIT 20`).all(...f.args);
+
+  const steps = await db.prepare(`WITH ${PV}
+    SELECT cnt pages, COUNT(*) sessions FROM (
+      SELECT session_id, COUNT(*) cnt FROM pv GROUP BY session_id
+    ) GROUP BY cnt ORDER BY cnt LIMIT 15`).all(...f.args);
+
+  return {
+    transitions: transitions.map((t) => ({ ...t, exitRate: 0 })),
+    exits: exits.map((e) => ({ ...e, exitRate: pct(e.exits, e.total) })),
+    loops,
+    entries,
+    steps
+  };
+}
