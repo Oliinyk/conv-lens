@@ -9,6 +9,7 @@ import { ingestBatch } from './ingest.js';
 import { buildInsights } from './insights.js';
 import * as agg from './aggregate.js';
 import { PRESET_LIST } from './presets.js';
+import { inspectSite } from './detect.js';
 import { publicConfig } from './config.js';
 import {
   listSites, getSite, createSite, updateSite, rotateKey, deleteSite, resolveSite,
@@ -125,6 +126,24 @@ export async function handle(req, opts = {}) {
     });
   }
 
+  // Looks at the site from the server: which platform, and is the tag really on the page.
+  // Open during setup because the wizard needs it before a key exists.
+  if (route === 'detect') {
+    if (!setupOpen && !(await authorized(db, q, headers))) return json(401, { error: 'Потрібен ключ доступу' });
+    const url = String(q.url || '').trim();
+    if (!url) return json(400, { ok: false, error: 'Вкажіть адресу сайту' });
+    let key = '';
+    if (q.site) {
+      const s = await getSite(db, q.site);
+      if (s) key = s.site_key;
+    }
+    try {
+      return json(200, await inspectSite(/^https?:\/\//i.test(url) ? url : 'https://' + url, key));
+    } catch (e) {
+      return json(200, { ok: false, error: String((e && e.message) || e) });
+    }
+  }
+
   if (route === 'setup') {
     if (!setupOpen) return json(403, { error: 'Налаштування вже завершено' });
     if (method !== 'POST') return json(405, { error: 'POST only' });
@@ -165,7 +184,9 @@ export async function handle(req, opts = {}) {
     if (method === 'GET') {
       const seen = await db.prepare('SELECT COUNT(*) n, MAX(last_at) last FROM sessions WHERE site_id = ?').get(site.id);
       return json(200, {
-        site, config: cfg, snippet: snippetFor(cfg, opts.publicOrigin || ''),
+        site, config: cfg,
+        snippet: snippetFor(cfg, opts.publicOrigin || ''),
+        connect: connectCode(cfg, opts.publicOrigin || ''),
         install: { sessions: seen?.n || 0, lastEventAt: seen?.last || 0 }
       });
     }
@@ -180,7 +201,8 @@ export async function handle(req, opts = {}) {
   if (route === 'site/key') {
     if (method !== 'POST') return json(405, { error: 'POST only' });
     const rotated = await rotateKey(db, site.id);
-    return json(200, { site: rotated, snippet: snippetFor(siteConfig(rotated), opts.publicOrigin || '') });
+    const rc = siteConfig(rotated);
+    return json(200, { site: rotated, snippet: snippetFor(rc, opts.publicOrigin || ''), connect: connectCode(rc, opts.publicOrigin || '') });
   }
 
   if (route === 'site/delete') {
@@ -267,6 +289,14 @@ function decodeHeader(v) { try { return decodeURIComponent(String(v || '')); } c
 export function snippetFor(cfg, publicOrigin) {
   const base = (publicOrigin || '').replace(/\/$/, '') || 'https://ВАШ-CONV-LENS';
   return `<script src="${base}/cl/t.js?s=${cfg.siteKey}" defer></script>`;
+}
+
+// One string to paste where a plugin asks for a connection, instead of an address and a key
+// in two separate fields that are easy to mix up between sites.
+export function connectCode(cfg, publicOrigin) {
+  const base = (publicOrigin || '').replace(/\/$/, '');
+  if (!base) return '';
+  return 'cl_' + Buffer.from(`${base}|${cfg.siteKey}`, 'utf8').toString('base64url');
 }
 
 // Custom and goal events the site sends itself, grouped by name and label.

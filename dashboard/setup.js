@@ -3,6 +3,20 @@ import { h, nf } from './charts.js';
 // First run and per-site settings. Everything a site owner needs to change lives here,
 // so nobody has to open a config file or write a regular expression.
 
+// Asks the server to look at the site instead of asking the owner what it runs on.
+async function detect(url, siteId) {
+  const q = new URLSearchParams({ url, ...(siteId ? { site: siteId } : {}) });
+  const res = await fetch(`/api/detect?${q}`, { headers: keyHeader() });
+  return res.json();
+}
+
+function keyHeader() {
+  try {
+    const k = localStorage.getItem('conv-lens-key');
+    return k ? { Authorization: `Bearer ${k}` } : {};
+  } catch { return {}; }
+}
+
 const field = (label, input, hint) => h('label', { class: 'fld' }, [
   h('span', { class: 'fld-l' }, label),
   input,
@@ -59,6 +73,31 @@ export function renderSetup(view, { presets, onDone }) {
     err,
     submit
   ]);
+
+  // Typing the address is enough: the server opens the site and preselects the type,
+  // so there is one less question the owner has to know the answer to.
+  const found = h('p', { class: 'inst', style: 'display:none' });
+  form.insertBefore(found, err);
+  let lastChecked = '';
+  origin.addEventListener('blur', async () => {
+    const v = origin.value.trim();
+    if (!v || v === lastChecked) return;
+    lastChecked = v;
+    found.style.display = '';
+    found.className = 'inst wait';
+    found.textContent = 'Дивимось на сайт…';
+    try {
+      const d = await detect(v);
+      if (!d.ok) { found.className = 'inst wait'; found.textContent = 'Не вдалось відкрити сайт: ' + d.error + '. Нічого страшного — виберіть тип самі.'; return; }
+      preset.value = d.preset;
+      preset.dispatchEvent(new Event('change'));
+      if (!name.value.trim() && d.title) name.value = d.title;
+      found.className = 'inst ok';
+      found.textContent = `Схоже на: ${d.platform}. Тип підібрали — змініть, якщо не вгадали.`;
+    } catch {
+      found.style.display = 'none';
+    }
+  });
 
   form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
@@ -269,8 +308,48 @@ export async function renderSettings(view, ctx) {
     h('h2', {}, 'Код для сайту'),
     h('p', { class: 'lead' }, 'Один рядок перед </head> на всіх сторінках. Якщо вже вставлений — нічого робити не треба.'),
     status,
-    copyBox(d.snippet || '')
+    copyBox(d.snippet || ''),
+    d.connect ? h('div', {}, [
+      h('h3', {}, 'Або один код підключення'),
+      h('p', { class: 'lead' }, 'Для плагіна WordPress та інших інтеграцій: вставте цей рядок в єдине поле — адреса і ключ усередині.'),
+      copyBox(d.connect)
+    ]) : null
   ]);
+  // "Did I paste it right?" answered by looking at the page, not by waiting for data.
+  const checkOut = h('p', { class: 'inst', style: 'display:none' });
+  const check = h('button', { class: 'primary', type: 'button' }, 'Перевірити встановлення');
+  check.addEventListener('click', async () => {
+    check.disabled = true;
+    checkOut.style.display = '';
+    checkOut.className = 'inst wait';
+    checkOut.textContent = 'Відкриваємо сайт і шукаємо код…';
+    try {
+      const r = await detect(site.origin || '', site.id);
+      if (!r.ok) {
+        checkOut.className = 'inst wait';
+        checkOut.textContent = 'Не вдалось відкрити сайт: ' + r.error;
+      } else if (!r.tag.found) {
+        checkOut.className = 'inst wait';
+        checkOut.textContent = 'Код на сторінці не знайдено. Перевірте, що ви вставили рядок саме на цей сайт і зберегли зміни.';
+      } else if (r.tag.placeholder) {
+        checkOut.className = 'inst wait';
+        checkOut.textContent = 'Код стоїть, але в ньому лишився приклад замість ваших значень — замініть адресу та ключ на ті, що вище.';
+      } else if (r.tag.otherKey) {
+        checkOut.className = 'inst wait';
+        checkOut.textContent = 'Код стоїть, але з ключем іншого сайту — дані пишуться не сюди. Замініть рядок на той, що вище.';
+      } else {
+        checkOut.className = 'inst ok';
+        checkOut.textContent = `Код на місці і ключ правильний. Платформа: ${r.platform}.`;
+      }
+    } catch (e) {
+      checkOut.className = 'inst wait';
+      checkOut.textContent = 'Не вдалось перевірити: ' + e.message;
+    }
+    check.disabled = false;
+  });
+  snippetCard.appendChild(h('div', { class: 'row-actions' }, [check]));
+  snippetCard.appendChild(checkOut);
+
   const rotate = h('button', { class: 'ghost', type: 'button' }, 'Замінити ключ сайту');
   rotate.addEventListener('click', async () => {
     if (!confirm('Старий код на сайті перестане працювати, доки ви не вставите новий. Замінити ключ?')) return;

@@ -12,16 +12,47 @@ if (!defined('ABSPATH')) {
 
 define('CONV_LENS_OPTION', 'conv_lens_settings');
 
+/**
+ * The dashboard hands out one connection code so nobody has to copy an address and a key
+ * into two fields and keep them matched. Legacy installs that filled both still work.
+ */
+function conv_lens_decode_connect($code)
+{
+    $code = trim((string) $code);
+    if (strpos($code, 'cl_') !== 0) {
+        return null;
+    }
+    $raw = strtr(substr($code, 3), '-_', '+/');
+    $raw = base64_decode($raw, true);
+    if (!$raw || strpos($raw, '|') === false) {
+        return null;
+    }
+    list($collector, $key) = explode('|', $raw, 2);
+    $collector = untrailingslashit(esc_url_raw(trim($collector)));
+    $key = sanitize_text_field(trim($key));
+    if (!$collector || !$key) {
+        return null;
+    }
+    return ['collector' => $collector, 'site_key' => $key];
+}
+
 function conv_lens_settings()
 {
     $defaults = [
+        'connect' => '',
         'collector' => '',
         'site_key' => '',
         'sample_rate' => 1,
         'exclude_logged_in' => 1,
         'survey' => 1,
     ];
-    return wp_parse_args(get_option(CONV_LENS_OPTION, []), $defaults);
+    $s = wp_parse_args(get_option(CONV_LENS_OPTION, []), $defaults);
+    $parts = conv_lens_decode_connect($s['connect']);
+    if ($parts) {
+        $s['collector'] = $parts['collector'];
+        $s['site_key'] = $parts['site_key'];
+    }
+    return $s;
 }
 
 function conv_lens_enabled()
@@ -182,6 +213,7 @@ function conv_lens_settings_page()
     }
     if (isset($_POST['conv_lens_nonce']) && wp_verify_nonce(sanitize_key($_POST['conv_lens_nonce']), 'conv_lens_save')) {
         update_option(CONV_LENS_OPTION, [
+            'connect' => sanitize_text_field(wp_unslash($_POST['connect'] ?? '')),
             'collector' => untrailingslashit(esc_url_raw(wp_unslash($_POST['collector'] ?? ''))),
             'site_key' => sanitize_text_field(wp_unslash($_POST['site_key'] ?? '')),
             'sample_rate' => max(0.01, min(1, (float) ($_POST['sample_rate'] ?? 1))),
@@ -198,11 +230,27 @@ function conv_lens_settings_page()
             <?php wp_nonce_field('conv_lens_save', 'conv_lens_nonce'); ?>
             <table class="form-table">
                 <tr>
+                    <th scope="row"><label for="connect">Код підключення</label></th>
+                    <td>
+                        <input name="connect" id="connect" type="text" class="large-text" autocomplete="off"
+                               value="<?php echo esc_attr($s['connect']); ?>" placeholder="cl_…">
+                        <p class="description">
+                            Conv Lens &rarr; Налаштування &rarr; «Код для сайту» &rarr; <strong>Або один код підключення</strong>.
+                            Вставте сюди — адреса і ключ усередині, два поля нижче заповнювати не треба.
+                            <?php if (conv_lens_decode_connect($s['connect'])) : ?>
+                                <br><strong style="color:#008a20">Код прийнято: <?php echo esc_html($s['collector']); ?></strong>
+                            <?php elseif (!empty($s['connect'])) : ?>
+                                <br><strong style="color:#d63638">Код не розпізнано — скопіюйте його ще раз цілком.</strong>
+                            <?php endif; ?>
+                        </p>
+                    </td>
+                </tr>
+                <tr>
                     <th scope="row"><label for="collector">URL колектора</label></th>
                     <td>
                         <input name="collector" id="collector" type="url" class="regular-text"
                                value="<?php echo esc_attr($s['collector']); ?>" placeholder="https://lens.example.com">
-                        <p class="description">Адреса, де працює Conv Lens. Її видно в дашборді.</p>
+                        <p class="description">Потрібно лише якщо ви не користуєтесь кодом підключення вище.</p>
                     </td>
                 </tr>
                 <tr>
@@ -210,7 +258,7 @@ function conv_lens_settings_page()
                     <td>
                         <input name="site_key" id="site_key" type="text" class="regular-text" autocomplete="off"
                                value="<?php echo esc_attr($s['site_key']); ?>" placeholder="напр. a2d68a203b654775c3ecc3f3">
-                        <p class="description">Conv Lens → Налаштування → «Код для сайту». Скопіюйте те, що стоїть після <code>?s=</code>.</p>
+                        <p class="description">Теж лише без коду підключення: те, що стоїть у рядку після <code>?s=</code>.</p>
                     </td>
                 </tr>
                 <tr>
