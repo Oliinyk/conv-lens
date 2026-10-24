@@ -110,7 +110,10 @@ export async function handle(req, opts = {}) {
   const setupOpen = await needsSetup(db);
 
   if (route === 'bootstrap') {
-    const sites = (await listSites(db)).map((s) => ({ id: s.id, name: s.name, origin: s.origin, site_key: s.site_key }));
+    const sites = (await listSites(db)).map((s) => {
+      const c = siteConfig(s);
+      return { id: s.id, name: s.name, origin: s.origin, site_key: s.site_key, replayMode: c.replayMode };
+    });
     if (setupOpen) return json(200, { needsSetup: true, sites: [], presets: PRESET_LIST });
     // Answered without a key as well: "setup is done, ask for the key" is not a secret,
     // and it lets the dashboard decide what to draw without a failed request on every load.

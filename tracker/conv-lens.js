@@ -24,6 +24,42 @@
   var CTA = (CFG.ctaSelectors || []).join(',');
   var SURVEY = CFG.survey || {};
 
+  // Replay mode: the dashboard opened this page inside its player. Nothing is tracked here —
+  // instead we expose a bridge so the player can drive the page from another domain, which is
+  // the only way a canvas or WebGL scene can be replayed (a DOM snapshot cannot capture it).
+  // A page opts in by publishing window.__replay = { ready, apply(state), theme(dark), forceBuilt() }.
+  if (/[?&]replay=1/.test(location.search)) {
+    var allowed = SELFQ.origin || '';
+    var answered = false;
+    var send = function (msg) {
+      try { (W.parent || W).postMessage(Object.assign({ __convLensReplay: true }, msg), allowed || '*'); } catch (e) {}
+    };
+    W.addEventListener('message', function (ev) {
+      var m = ev.data;
+      if (!m || m.__convLensReplay !== true || ev.source !== W.parent) return;
+      if (allowed && ev.origin !== allowed) return;
+      var api = W.__replay;
+      if (m.op === 'ping') { send({ op: 'ready', has: !!(api && api.ready) }); return; }
+      if (!api) return;
+      try {
+        if (m.op === 'apply' && api.apply) api.apply(m.st || {});
+        else if (m.op === 'scroll') W.scrollTo(0, m.y || 0);
+        else if (m.op === 'theme' && api.theme) api.theme(!!m.dark);
+        else if (m.op === 'forceBuilt' && api.forceBuilt) api.forceBuilt();
+      } catch (e) {}
+    });
+    // The page may publish its API after this script runs, so announce readiness when it appears.
+    var tries = 0;
+    var watch = setInterval(function () {
+      tries++;
+      if (W.__replay && W.__replay.ready && !answered) { answered = true; send({ op: 'ready', has: true }); }
+      if (answered || tries > 100) clearInterval(watch);
+    }, 100);
+    send({ op: 'ready', has: !!(W.__replay && W.__replay.ready) });
+    W.__convLens = { replayBridge: true };
+    return;
+  }
+
   if (CFG.respectDnt !== false && (N.doNotTrack === '1' || W.doNotTrack === '1')) return;
 
   var queue = [], sid = null, vid = null, consent = !CFG.requireConsent;

@@ -367,9 +367,23 @@ async function openSession(id) {
     const box = h('div', { class: 'card pad-0' });
     host.appendChild(box);
     const close = () => { box.remove(); state.player = null; };
-    state.player = sameOriginSite()
-      ? renderLiveReplay(box, d, { visitorTag, onClose: close, onHeatmap: () => { state.heatSid = id; switchTab('heat'); } })
-      : renderReplay(box, d, close);
+    const liveOrigin = liveReplaySite();
+    if (liveOrigin) {
+      state.player = renderLiveReplay(box, d, {
+        visitorTag, onClose: close, siteOrigin: liveOrigin,
+        onHeatmap: () => { state.heatSid = id; switchTab('heat'); },
+        // The site never answered: no Conv Lens tag on it, no replay API, or it refuses framing.
+        onUnavailable: () => {
+          if (state.player) state.player.destroy();
+          box.innerHTML = '';
+          box.appendChild(h('div', { class: 'cmp-note', style: 'margin:12px' },
+            'Справжню сторінку відкрити не вдалось — показуємо запис зі знімка верстки. Перевірте, що тег Conv Lens стоїть на сайті і сторінка не забороняє показ у фреймі.'));
+          state.player = renderReplay(box, d, close);
+        }
+      });
+    } else {
+      state.player = renderReplay(box, d, close);
+    }
     state.playerId = id;
     host.scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (e) {
@@ -881,11 +895,21 @@ try {
   if (t) document.documentElement.setAttribute('data-theme', t);
 } catch {}
 
-// The live player and live click map load the real page in an iframe, which the browser only
-// allows when Conv Lens is served from the same origin as the site. On its own domain Conv Lens
-// replays the layout snapshot the tracker recorded instead — no access to the site needed.
+const currentSite = () => state.sites.find((x) => x.id === state.site) || null;
+
+// Two ways to replay a session. The snapshot player rebuilds the page from the layout the
+// tracker recorded and always works. The live player opens the real page in an iframe and
+// drives it over postMessage — the only way to replay a canvas or 3D scene, which no DOM
+// snapshot can capture. It is opt-in per site because it needs the page to publish a replay API.
+function liveReplaySite() {
+  const cur = currentSite();
+  return cur && cur.origin && cur.replayMode === 'live' ? cur.origin : '';
+}
+
+// The click map reads the framed page's DOM to measure it, which no bridge can do across
+// domains, so it stays same-origin only.
 function sameOriginSite() {
-  const cur = state.sites.find((x) => x.id === state.site);
+  const cur = currentSite();
   if (!cur || !cur.origin) return false;
   try { return new URL(cur.origin).origin === location.origin; } catch { return false; }
 }

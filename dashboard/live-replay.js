@@ -1,7 +1,8 @@
 // Session player for the 9584-S cutaway page.
 // Instead of drawing a wireframe of the layout, it opens the real page (/?replay=1) in an iframe at the
 // visitor's viewport size and drives it: scroll position, the 3D scene state (camera, explode, selected layer,
-// filter, hover), plus a cursor and click ripples on top. Same origin, so the player talks to window.__replay.
+// filter, hover), plus a cursor and click ripples on top. The page is driven over postMessage
+// through the bridge the tracker installs, so this works when the site lives on another domain.
 import { h, dur } from './charts.js';
 
 const CSS = `
@@ -104,7 +105,7 @@ function sample(list, t, keys, maxGap = 1200) {
   return out;
 }
 
-export function renderLiveReplay(host, detail, { onClose, visitorTag, onHeatmap } = {}) {
+export function renderLiveReplay(host, detail, { onClose, visitorTag, onHeatmap, siteOrigin, onUnavailable } = {}) {
   injectCss();
   const { session, events } = detail;
   const custom = (e) => e.type === 'custom' || e.type === 'goal';
@@ -222,21 +223,40 @@ export function renderLiveReplay(host, detail, { onClose, visitorTag, onHeatmap 
   }
   const ro = new ResizeObserver(fit); ro.observe(stageEl); fit();
 
-  // ---- page in the iframe ----
+  // ---- page in the iframe, driven over postMessage ----
+  // The site answers through the bridge in its Conv Lens tag. If nobody answers, the page
+  // cannot be replayed live (no bridge, or it refuses to be framed) and the caller is told
+  // so it can fall back to the snapshot player.
   let api = null;
-  iframe.src = '/?replay=1';
-  const waitApi = setInterval(() => {
-    try {
-      const w = iframe.contentWindow;
-      if (w && w.__replay && w.__replay.ready) {
-        clearInterval(waitApi);
-        api = w.__replay;
-        if (env.theme || env.dark !== undefined) api.theme(env.theme ? env.theme === 'dark' : !!env.dark);
-        loading.style.opacity = 0; setTimeout(() => loading.remove(), 300);
-        lastKey = ''; render(tl.toReal(virt));
-      }
-    } catch (e) { /* not ready */ }
-  }, 150);
+  const base = String(siteOrigin || location.origin).replace(/\/$/, '');
+  iframe.src = base + '/?replay=1';
+
+  const post = (op, extra = {}) => {
+    try { iframe.contentWindow.postMessage({ __convLensReplay: true, op, ...extra }, '*'); } catch (e) { /* not loaded yet */ }
+  };
+  function onMessage(ev) {
+    const m = ev.data;
+    if (!m || m.__convLensReplay !== true || ev.source !== iframe.contentWindow) return;
+    if (m.op !== 'ready' || api) return;
+    if (!m.has) return; // bridge is there, but the page publishes no replay API
+    clearInterval(waitApi);
+    clearTimeout(giveUp);
+    api = {
+      apply: (st) => post('apply', { st }),
+      theme: (dark) => post('theme', { dark }),
+      scroll: (y) => post('scroll', { y })
+    };
+    if (env.theme || env.dark !== undefined) api.theme(env.theme ? env.theme === 'dark' : !!env.dark);
+    loading.style.opacity = 0; setTimeout(() => loading.remove(), 300);
+    lastKey = ''; render(tl.toReal(virt));
+  }
+  addEventListener('message', onMessage);
+  const waitApi = setInterval(() => post('ping'), 250);
+  const giveUp = setTimeout(() => {
+    if (api) return;
+    clearInterval(waitApi);
+    if (onUnavailable) onUnavailable();
+  }, 6000);
 
   // ---- playback ----
   let virt = 0, playing = false, speed = 1, raf = 0, lastNow = 0, lastKey = '', lastScroll = -1;
@@ -250,7 +270,7 @@ export function renderLiveReplay(host, detail, { onClose, visitorTag, onHeatmap 
 
     if (api) {
       try {
-        if (scrollY !== lastScroll) { iframe.contentWindow.scrollTo(0, scrollY); lastScroll = scrollY; }
+        if (scrollY !== lastScroll) { api.scroll(scrollY); lastScroll = scrollY; }
         const f = sample(scene, t, ['cx', 'cy', 'cz', 'tx', 'ty', 'tz', 'E'], 1300);
         if (f && f.B != null) { const fb = sample(sceneB, t, ['B'], 700); if (fb) f.B = fb.B; }
         const key = f ? [f.cx, f.cy, f.cz, f.tx, f.ty, f.tz, f.E, f.sel, f.filter, f.hover, f.B, mx, my].join('|') : 'none|' + mx + '|' + my;
@@ -327,6 +347,12 @@ export function renderLiveReplay(host, detail, { onClose, visitorTag, onHeatmap 
   addEventListener('keydown', onKey);
 
   seek(0);
-  function destroy() { setPlaying(false); clearInterval(waitApi); ro.disconnect(); removeEventListener('keydown', onKey); iframe.src = 'about:blank'; }
+  function destroy() {
+    setPlaying(false);
+    clearInterval(waitApi); clearTimeout(giveUp);
+    removeEventListener('message', onMessage);
+    ro.disconnect(); removeEventListener('keydown', onKey);
+    iframe.src = 'about:blank';
+  }
   return { destroy };
 }
