@@ -661,9 +661,11 @@ export async function journeys(db, f) {
   const entries = await db.prepare(`WITH ${PV}
     SELECT path, COUNT(*) n FROM pv WHERE prev IS NULL GROUP BY path ORDER BY n DESC LIMIT 20`).all(...f.args);
 
+  // Distinct pages, not pageviews: reloading or coming back to the same page does not mean
+  // the visitor saw more of the site, and counting views made a one-page site look like 18.
   const steps = await db.prepare(`WITH ${PV}
     SELECT cnt pages, COUNT(*) sessions FROM (
-      SELECT session_id, COUNT(*) cnt FROM pv GROUP BY session_id
+      SELECT session_id, COUNT(DISTINCT path) cnt FROM pv GROUP BY session_id
     ) GROUP BY cnt ORDER BY cnt LIMIT 15`).all(...f.args);
 
   return {

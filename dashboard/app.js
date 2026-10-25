@@ -713,7 +713,7 @@ async function renderJourney() {
   const deepest = d.steps.length ? d.steps[d.steps.length - 1].pages : 0;
   view.appendChild(h('div', { class: 'grid cols-4', style: 'margin-bottom:14px' }, [
     tile('Переглядів однієї сторінки', allSteps ? Math.round((onePage / allSteps) * 100) + '%' : '—', `${nf(onePage)} сесій не пішли далі`),
-    tile('Найглибша сесія', deepest ? deepest + ' сторінок' : '—', 'скільки сторінок встигли подивитись'),
+    tile('Найглибша сесія', deepest ? deepest + ' стор.' : '—', 'різних сторінок за один візит'),
     tile('Різних переходів', nf(d.transitions.length), 'між якими сторінками ходять'),
     tile('Петель', nf(d.loops.length), d.loops.length ? 'місця, де люди вертаються назад' : 'люди не ходять колами')
   ]));
