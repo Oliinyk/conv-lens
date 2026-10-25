@@ -715,7 +715,7 @@ export async function users(db, f, limit = 200) {
   const keys = [];
   for (const traits of latest.values()) {
     for (const key of Object.keys(traits)) {
-      if (!keys.includes(key) && keys.length < 8) keys.push(key);
+      if (!keys.includes(key) && keys.length < 12) keys.push(key);
     }
   }
 
