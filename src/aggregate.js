@@ -712,8 +712,12 @@ export async function users(db, f, limit = 200) {
     if (traits && typeof traits === 'object') latest.set(row.id, traits);
   }
 
+  // Walk people newest first, so a trait the site started sending today lands in its intended
+  // place instead of being appended after whatever older rows happened to carry.
   const keys = [];
-  for (const traits of latest.values()) {
+  for (const row of rows) {
+    const traits = latest.get(row.id);
+    if (!traits) continue;
     for (const key of Object.keys(traits)) {
       if (!keys.includes(key) && keys.length < 12) keys.push(key);
     }
