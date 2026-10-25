@@ -16,7 +16,7 @@ let KEY = readKey();
   if (fromUrl) { KEY = fromUrl; saveKey(fromUrl); u.searchParams.delete('key'); history.replaceState(null, '', u.pathname + u.search + u.hash); }
 }
 class AuthError extends Error {}
-const state = { tab: 'overview', days: 30, device: '', source: '', currency: '', cache: {}, player: null, site: '', sites: [], presets: [], compare: false };
+const state = { tab: 'overview', days: 30, device: '', source: '', currency: '', cache: {}, player: null, site: '', sites: [], presets: [], compare: false, role: 'owner' };
 
 async function api(path, params = {}) {
   const q = new URLSearchParams({
@@ -972,13 +972,23 @@ function sameOriginSite() {
   try { return new URL(cur.origin).origin === location.origin; } catch { return false; }
 }
 
+// A view key opens one site read-only: no settings, no switching to another site.
+function applyRole() {
+  const viewer = state.role === 'viewer';
+  const tab = document.querySelector('#tabs button[data-tab="settings"]');
+  if (tab) tab.style.display = viewer ? 'none' : '';
+  if (viewer && state.tab === 'settings') switchTab('overview');
+  const logout = document.getElementById('btnLogout');
+  if (logout) logout.title = viewer ? 'Вийти: забути ключ у цьому браузері' : logout.title;
+}
+
 function siteSelect() {
   const sel = document.getElementById('fSite');
   if (!sel) return;
   sel.innerHTML = '';
   state.sites.forEach((x) => sel.appendChild(h('option', { value: x.id }, x.name || x.origin || x.id)));
   sel.value = state.site;
-  sel.style.display = state.sites.length > 1 ? '' : 'none';
+  sel.style.display = state.sites.length > 1 && state.role === 'owner' ? '' : 'none';
 }
 
 async function refreshSites() {
@@ -987,6 +997,8 @@ async function refreshSites() {
   if (res.status === 401 || d.needsKey) throw new AuthError('bad key');
   state.sites = d.sites || [];
   state.presets = d.presets || [];
+  state.role = d.role || 'owner';
+  applyRole();
   if (!state.site || !state.sites.some((x) => x.id === state.site)) state.site = state.sites[0]?.id || '';
   siteSelect();
   const label = document.getElementById('siteLabel');

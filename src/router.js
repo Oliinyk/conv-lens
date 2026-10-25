@@ -14,7 +14,7 @@ import { publicConfig } from './config.js';
 import {
   listSites, getSite, createSite, updateSite, rotateKey, deleteSite, resolveSite,
   siteConfig, adminToken, tokenIsFromEnv, needsSetup, setSetting, newKey,
-  countOrphans, adoptOrphans
+  countOrphans, adoptOrphans, getSiteByViewKey, rotateViewKey, ensureViewKey
 } from './store.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -119,10 +119,15 @@ export async function handle(req, opts = {}) {
     if (setupOpen) return json(200, { needsSetup: true, sites: [], presets: PRESET_LIST });
     // Answered without a key as well: "setup is done, ask for the key" is not a secret,
     // and it lets the dashboard decide what to draw without a failed request on every load.
-    if (!(await authorized(db, q, headers))) return json(200, { needsSetup: false, needsKey: true, sites: [], presets: [] });
+    const who = await access(db, q, headers);
+    if (!who) return json(200, { needsSetup: false, needsKey: true, sites: [], presets: [] });
+    const visible = who.admin ? sites : sites.filter((x) => x.id === who.siteId);
     return json(200, {
-      needsSetup: false, sites, presets: PRESET_LIST,
-      storage: storageKind(), tokenFromEnv: tokenIsFromEnv(),
+      needsSetup: false, role: who.admin ? 'owner' : 'viewer',
+      sites: visible.map(({ view_key, ...rest }) => rest),
+      presets: who.admin ? PRESET_LIST : [],
+      storage: who.admin ? storageKind() : undefined,
+      tokenFromEnv: who.admin ? tokenIsFromEnv() : undefined,
       publicOrigin: opts.publicOrigin || ''
     });
   }
@@ -130,7 +135,8 @@ export async function handle(req, opts = {}) {
   // Looks at the site from the server: which platform, and is the tag really on the page.
   // Open during setup because the wizard needs it before a key exists.
   if (route === 'detect') {
-    if (!setupOpen && !(await authorized(db, q, headers))) return json(401, { error: 'Потрібен ключ доступу' });
+    const whoDetect = setupOpen ? { admin: true } : await access(db, q, headers);
+    if (!whoDetect || !whoDetect.admin) return json(401, { error: 'Потрібен ключ доступу' });
     const url = String(q.url || '').trim();
     if (!url) return json(400, { ok: false, error: 'Вкажіть адресу сайту' });
     let key = '';
@@ -158,9 +164,11 @@ export async function handle(req, opts = {}) {
     return json(200, { ok: true, token, site: { id: site.id, name: site.name, origin: site.origin, site_key: site.site_key } });
   }
 
-  // ---------- everything below needs the key ----------
-  if (!(await authorized(db, q, headers))) {
-    return json(401, { error: 'Невірний ключ доступу', needsKey: true });
+  // ---------- everything below needs a key ----------
+  const who = await access(db, q, headers);
+  if (!who) return json(401, { error: 'Невірний ключ доступу', needsKey: true });
+  if (!who.admin && ADMIN_ONLY.has(route)) {
+    return json(403, { error: 'Цей ключ дає лише перегляд одного сайту' });
   }
 
   if (route === 'presets') return json(200, { presets: PRESET_LIST });
@@ -176,8 +184,11 @@ export async function handle(req, opts = {}) {
     return json(200, { sites: await listSites(db) });
   }
 
-  // Routes from here on act on one site.
-  const site = await resolveSite(db, q.site || q.s);
+  // Routes from here on act on one site. A view key pins it: whatever ?site= says is ignored,
+  // so the key cannot be pointed at someone else's data.
+  const site = who.admin
+    ? await resolveSite(db, q.site || q.s)
+    : await getSite(db, who.siteId);
   if (!site) return json(400, { error: 'Виберіть сайт', needsSite: true });
   const cfg = siteConfig(site);
 
@@ -185,8 +196,10 @@ export async function handle(req, opts = {}) {
     if (method === 'GET') {
       const seen = await db.prepare('SELECT COUNT(*) n, MAX(last_at) last FROM sessions WHERE site_id = ?').get(site.id);
       const orphans = await countOrphans(db);
+      const withView = await ensureViewKey(db, site);
       return json(200, {
         orphans,
+        viewUrl: viewUrlFor(withView, opts.publicOrigin || ''),
         site, config: cfg,
         snippet: snippetFor(cfg, opts.publicOrigin || ''),
         connect: connectCode(cfg, opts.publicOrigin || ''),
@@ -205,6 +218,12 @@ export async function handle(req, opts = {}) {
   if (route === 'site/adopt') {
     if (method !== 'POST') return json(405, { error: 'POST only' });
     return json(200, await adoptOrphans(db, site.id));
+  }
+
+  if (route === 'site/view-key') {
+    if (method !== 'POST') return json(405, { error: 'POST only' });
+    const rotated = await rotateViewKey(db, site.id);
+    return json(200, { viewKey: rotated.view_key, viewUrl: viewUrlFor(rotated, opts.publicOrigin || '') });
   }
 
   if (route === 'site/key') {
@@ -286,12 +305,25 @@ export async function handle(req, opts = {}) {
   }
 }
 
-async function authorized(db, q, headers) {
-  const token = await adminToken(db);
-  if (!token) return true;
+// Who is asking. Either the owner, who sees every site and can change things, or someone
+// holding a site's view key, who sees that one site read-only. Anything else is nobody.
+async function access(db, q, headers) {
   const given = q.key || String(headers.authorization || '').replace(/^Bearer\s+/i, '');
-  return given === token;
+  const token = await adminToken(db);
+  if (!token) return { admin: true, siteId: '' };
+  if (given && given === token) return { admin: true, siteId: '' };
+  if (given) {
+    const site = await getSiteByViewKey(db, given);
+    if (site) return { admin: false, siteId: site.id };
+  }
+  return null;
 }
+
+// Routes that change something, or that reach across sites, are the owner's alone.
+const ADMIN_ONLY = new Set([
+  'sites', 'site', 'site/key', 'site/view-key', 'site/delete', 'site/adopt',
+  'detect', 'delete', 'purge', 'snippet'
+]);
 
 function decodeHeader(v) { try { return decodeURIComponent(String(v || '')); } catch { return String(v || ''); } }
 
@@ -302,6 +334,11 @@ export function snippetFor(cfg, publicOrigin) {
 
 // One string to paste where a plugin asks for a connection, instead of an address and a key
 // in two separate fields that are easy to mix up between sites.
+export function viewUrlFor(site, publicOrigin) {
+  const base = (publicOrigin || '').replace(/\/$/, '') || 'https://ВАШ-CONV-LENS';
+  return site.view_key ? `${base}/dashboard/?key=${site.view_key}` : '';
+}
+
 export function connectCode(cfg, publicOrigin) {
   const base = (publicOrigin || '').replace(/\/$/, '');
   if (!base) return '';

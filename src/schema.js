@@ -3,7 +3,7 @@
 export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sites(
   id TEXT PRIMARY KEY, name TEXT, origin TEXT, site_key TEXT UNIQUE,
-  created_at INTEGER, config TEXT
+  view_key TEXT UNIQUE, created_at INTEGER, config TEXT
 );
 CREATE TABLE IF NOT EXISTS settings(
   k TEXT PRIMARY KEY, v TEXT
@@ -49,5 +49,6 @@ export const MIGRATIONS = [
   'ALTER TABLE sessions ADD COLUMN city TEXT',
   'ALTER TABLE sessions ADD COLUMN region TEXT',
   'ALTER TABLE events ADD COLUMN site_id TEXT',
-  'ALTER TABLE snapshots ADD COLUMN site_id TEXT'
+  'ALTER TABLE snapshots ADD COLUMN site_id TEXT',
+  'ALTER TABLE sites ADD COLUMN view_key TEXT'
 ];

@@ -363,6 +363,27 @@ export async function renderSettings(view, ctx) {
   snippetCard.appendChild(rotate);
   view.appendChild(snippetCard);
 
+  // --- a link to hand to whoever owns this site
+  if (d.viewUrl) {
+    const shareBox = h('div', { class: 'card set-form' }, [
+      h('h2', {}, 'Доступ для клієнта'),
+      h('p', { class: 'lead' }, 'Це посилання відкриває дашборд лише цього сайту і лише на перегляд: '
+        + 'інші сайти, налаштування і видалення записів за ним недоступні. Можна давати стороннім.'),
+      copyBox(d.viewUrl)
+    ]);
+    const reset = h('button', { class: 'ghost', type: 'button' }, 'Відкликати доступ');
+    reset.addEventListener('click', async () => {
+      if (!confirm('Стара адреса перестане працювати в усіх, кому ви її давали. Видати нову?')) return;
+      try {
+        const r = await apiPost('site/view-key', {});
+        shareBox.replaceChild(copyBox(r.viewUrl || ''), shareBox.querySelector('.snippet-row'));
+      } catch (e) { alert('Не вдалось: ' + e.message); }
+    });
+    shareBox.appendChild(h('p', { class: 'fld-h' }, 'Відкликання видає нову адресу замість старої.'));
+    shareBox.appendChild(reset);
+    view.appendChild(shareBox);
+  }
+
   // --- data recorded before this instance knew about sites
   const orph = d.orphans || {};
   if (orph.sessions || orph.events) {

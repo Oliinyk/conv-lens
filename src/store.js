@@ -37,7 +37,30 @@ export async function setSetting(db, k, v) {
 }
 
 export async function listSites(db) {
-  return db.prepare('SELECT id, name, origin, site_key, created_at, config FROM sites ORDER BY created_at').all();
+  return db.prepare('SELECT id, name, origin, site_key, view_key, created_at, config FROM sites ORDER BY created_at').all();
+}
+
+// A key that opens the dashboard for one site and nothing else: handed to a client who
+// should see their own numbers without seeing anyone else's.
+export async function getSiteByViewKey(db, key) {
+  if (!key) return null;
+  return (await db.prepare('SELECT * FROM sites WHERE view_key = ?').get(key)) || null;
+}
+
+export async function rotateViewKey(db, id) {
+  const site = await getSite(db, id);
+  if (!site) return null;
+  const key = newKey(16);
+  await db.prepare('UPDATE sites SET view_key = ? WHERE id = ?').run(key, site.id);
+  return { ...site, view_key: key };
+}
+
+// Sites created before per-site access existed have no view key yet.
+export async function ensureViewKey(db, site) {
+  if (!site || site.view_key) return site;
+  const key = newKey(16);
+  await db.prepare('UPDATE sites SET view_key = ? WHERE id = ?').run(key, site.id);
+  return { ...site, view_key: key };
 }
 
 export async function getSite(db, idOrKey) {
@@ -64,11 +87,12 @@ export async function createSite(db, { name, origin, preset = 'shop', config = {
     name: String(name || origin || id).slice(0, 80),
     origin: String(origin || '').replace(/\/$/, '').slice(0, 200),
     site_key: newKey(),
+    view_key: newKey(16),
     created_at: Date.now(),
     config: JSON.stringify({ preset, ...config })
   };
-  await db.prepare('INSERT INTO sites (id, name, origin, site_key, created_at, config) VALUES (?,?,?,?,?,?)')
-    .run(site.id, site.name, site.origin, site.site_key, site.created_at, site.config);
+  await db.prepare('INSERT INTO sites (id, name, origin, site_key, view_key, created_at, config) VALUES (?,?,?,?,?,?,?)')
+    .run(site.id, site.name, site.origin, site.site_key, site.view_key, site.created_at, site.config);
   return site;
 }
 
