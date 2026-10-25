@@ -183,13 +183,20 @@
       startedAt: startedAt, batch: ++sent, items: items
     });
   }
+  // text/plain is the only JSON-carrying type the CORS safelist allows. Anything else turns the
+  // request into a preflighted one, and a preflighted sendBeacon is dropped by the browser even
+  // though sendBeacon() itself returned true. The collector parses the body as JSON regardless.
+  var BODY_TYPE = 'text/plain;charset=UTF-8';
+
   function flush(sync) {
     if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
     if (!queue.length || !consent) return;
     var body = envelope(queue.splice(0, queue.length));
     try {
-      if (sync && N.sendBeacon) { N.sendBeacon(ENDPOINT, new Blob([body], { type: 'application/json' })); return; }
-      fetch(ENDPOINT, { method: 'POST', body: body, keepalive: true, headers: { 'Content-Type': 'application/json' }, credentials: 'omit' }).catch(function () {});
+      // sendBeacon refuses bodies over the browser's quota (~64 KB) and returns false; without
+      // this check those events would be gone, because the queue is already drained.
+      if (sync && N.sendBeacon && N.sendBeacon(ENDPOINT, new Blob([body], { type: BODY_TYPE }))) return;
+      fetch(ENDPOINT, { method: 'POST', body: body, keepalive: true, headers: { 'Content-Type': BODY_TYPE }, credentials: 'omit' }).catch(function () {});
     } catch (e) {}
   }
 
