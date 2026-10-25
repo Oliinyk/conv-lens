@@ -1,4 +1,5 @@
 import { h, nf } from './charts.js';
+import { PATH_MODES } from './path-modes.js';
 
 // First run and per-site settings. Everything a site owner needs to change lives here,
 // so nobody has to open a config file or write a regular expression.
@@ -206,6 +207,7 @@ export async function renderSettings(view, ctx) {
   const retention = select([[7, '7 днів'], [14, '14 днів'], [30, '30 днів'], [60, '60 днів'], [90, '90 днів']], cfg.retentionDays || 30);
   const sample = select([[1, 'усі відвідувачі'], [0.5, 'половина'], [0.25, 'чверть'], [0.1, 'десята частина']], cfg.sampleRate ?? 1);
   const replayMode = select([['snapshot', 'зі знімка верстки'], ['live', 'відкривати справжню сторінку']], cfg.replayMode || 'snapshot');
+  const pathMode = select(PATH_MODES, cfg.pathMode || 'noise');
   const dnt = h('input', { type: 'checkbox', ...(cfg.respectDnt ? { checked: 'checked' } : {}) });
   const fn = funnelEditor(cfg.funnel);
   const ctaSel = input({ type: 'text', value: (cfg.ctaSelectors || []).join(', '), placeholder: '[data-cl-cta], .buy-button' });
@@ -243,6 +245,9 @@ export async function renderSettings(view, ctx) {
       field('Записувати', sample, 'На великому трафіку достатньо частини.'),
       h('label', { class: 'fld chk' }, [dnt, h('span', {}, 'Не записувати тих, хто просив не відслідковувати (Do Not Track)')])
     ]),
+    field('Що вважати однією сторінкою', pathMode,
+      'Якщо сайт додає до адреси ?v=8 чи utm-мітки, це та сама сторінка. Інакше у звітах замість '
+      + 'однієї сторінки будуть десятки її версій.'),
     field('Як відтворювати сесії', replayMode,
       'Знімок верстки працює завжди. «Справжня сторінка» потрібна лише сайтам, де головне намальовано на canvas або в 3D: сторінка відкривається у фреймі і керується через тег Conv Lens, тому вона має публікувати window.__replay.'),
     h('h3', {}, 'Кроки фунела'),
@@ -273,6 +278,7 @@ export async function renderSettings(view, ctx) {
           retentionDays: Number(retention.value) || 30,
           sampleRate: Number(sample.value) || 1,
           replayMode: replayMode.value,
+          pathMode: pathMode.value,
           respectDnt: dnt.checked,
           funnel: fn.read(),
           ctaSelectors: ctaSel.value.split(',').map((s) => s.trim()).filter(Boolean),
@@ -362,6 +368,35 @@ export async function renderSettings(view, ctx) {
   snippetCard.appendChild(h('p', { class: 'fld-h' }, 'Знадобиться, якщо ключ потрапив не туди, куди слід.'));
   snippetCard.appendChild(rotate);
   view.appendChild(snippetCard);
+
+  // --- apply the page rule to history too
+  {
+    const out = h('p', { class: 'inst', style: 'display:none' });
+    const btn = h('button', { class: 'ghost', type: 'button' }, 'Почистити вже записані адреси');
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      out.style.display = '';
+      out.className = 'inst wait';
+      out.textContent = 'Чистимо…';
+      try {
+        const r = await apiPost('site/clean-paths', {});
+        out.className = 'inst ok';
+        out.textContent = r.merged
+          ? `Готово: ${nf(r.merged)} адрес зведено до ${nf(r.pages - r.merged)} справжніх сторінок. Натисніть «Оновити».`
+          : 'Нічого чистити — усі адреси вже у правильному вигляді.';
+      } catch (e) {
+        out.className = 'inst wait';
+        out.textContent = 'Не вдалось: ' + e.message;
+      }
+      btn.disabled = false;
+    });
+    view.appendChild(h('div', { class: 'card set-form' }, [
+      h('h2', {}, 'Адреси сторінок'),
+      h('p', { class: 'lead' }, 'Правило вище діє на нові дані. Натисніть, щоб застосувати його і до вже записаних — '
+        + 'версії однієї сторінки зіллються в одну.'),
+      out, btn
+    ]));
+  }
 
   // --- a link to hand to whoever owns this site
   if (d.viewUrl) {

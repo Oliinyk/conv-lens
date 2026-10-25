@@ -2,6 +2,7 @@
 // each one is a row here with its own public key and its own config.
 import { randomBytes } from 'node:crypto';
 import { resolveConfig } from './config.js';
+import { normalizePath } from './paths.js';
 
 export const newKey = (bytes = 12) => randomBytes(bytes).toString('hex');
 
@@ -179,4 +180,30 @@ export async function adoptOrphans(db, siteId, batch = 400) {
 
   const left = await db.prepare("SELECT COUNT(*) n FROM sessions WHERE site_id IS NULL OR site_id = ''").get();
   return { moved: ids.length, remaining: (left && left.n) || 0 };
+}
+
+// Paths already written keep whatever form they arrived in. Rewriting them is cheap because
+// the work is per distinct path, not per row.
+export async function cleanPaths(db, siteId, mode = 'noise') {
+  if (!siteId) return { pages: 0, merged: 0 };
+  const seen = new Set();
+  const add = (rows) => rows.forEach((r) => r.p && seen.add(r.p));
+  add(await db.prepare('SELECT DISTINCT path p FROM events WHERE site_id = ?').all(siteId));
+  add(await db.prepare('SELECT DISTINCT entry_path p FROM sessions WHERE site_id = ?').all(siteId));
+  add(await db.prepare('SELECT DISTINCT exit_path p FROM sessions WHERE site_id = ?').all(siteId));
+  add(await db.prepare('SELECT DISTINCT path p FROM snapshots WHERE site_id = ?').all(siteId));
+
+  const writes = [];
+  let merged = 0;
+  for (const p of seen) {
+    const clean = normalizePath(p, mode);
+    if (clean === p) continue;
+    merged++;
+    writes.push({ sql: 'UPDATE events SET path = ? WHERE site_id = ? AND path = ?', args: [clean, siteId, p] });
+    writes.push({ sql: 'UPDATE snapshots SET path = ? WHERE site_id = ? AND path = ?', args: [clean, siteId, p] });
+    writes.push({ sql: 'UPDATE sessions SET entry_path = ? WHERE site_id = ? AND entry_path = ?', args: [clean, siteId, p] });
+    writes.push({ sql: 'UPDATE sessions SET exit_path = ? WHERE site_id = ? AND exit_path = ?', args: [clean, siteId, p] });
+  }
+  for (let i = 0; i < writes.length; i += 80) await db.batch(writes.slice(i, i + 80));
+  return { pages: seen.size, merged };
 }

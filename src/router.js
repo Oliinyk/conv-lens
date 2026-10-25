@@ -14,7 +14,7 @@ import { publicConfig } from './config.js';
 import {
   listSites, getSite, createSite, updateSite, rotateKey, deleteSite, resolveSite,
   siteConfig, adminToken, tokenIsFromEnv, needsSetup, setSetting, newKey,
-  countOrphans, adoptOrphans, getSiteByViewKey, rotateViewKey, ensureViewKey
+  countOrphans, adoptOrphans, getSiteByViewKey, rotateViewKey, ensureViewKey, cleanPaths
 } from './store.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -173,6 +173,26 @@ export async function handle(req, opts = {}) {
 
   if (route === 'presets') return json(200, { presets: PRESET_LIST });
 
+  // A list of every site with the numbers that matter, so the owner can see them side by side
+  // and jump straight into one.
+  if (route === 'sites/overview') {
+    const all = await listSites(db);
+    const out = [];
+    for (const row of all) {
+      const sf = agg.buildFilter({ ...q, siteId: row.id });
+      const cfgRow = siteConfig(row);
+      const ov = await agg.overview(db, cfgRow, sf);
+      const seen = await db.prepare('SELECT MAX(last_at) last FROM sessions WHERE site_id = ?').get(row.id);
+      out.push({
+        id: row.id, name: row.name, origin: row.origin,
+        sessions: ov.sessions, visitors: ov.visitors, orders: ov.orders,
+        revenue: ov.revenue, cr: ov.cr, friction: ov.avgFriction, bounceRate: ov.bounceRate,
+        currency: cfgRow.currency, lastEventAt: (seen && seen.last) || 0
+      });
+    }
+    return json(200, { sites: out });
+  }
+
   if (route === 'sites') {
     if (method === 'POST') {
       let b = {};
@@ -218,6 +238,11 @@ export async function handle(req, opts = {}) {
   if (route === 'site/adopt') {
     if (method !== 'POST') return json(405, { error: 'POST only' });
     return json(200, await adoptOrphans(db, site.id));
+  }
+
+  if (route === 'site/clean-paths') {
+    if (method !== 'POST') return json(405, { error: 'POST only' });
+    return json(200, await cleanPaths(db, site.id, cfg.pathMode || 'noise'));
   }
 
   if (route === 'site/view-key') {
@@ -322,7 +347,7 @@ async function access(db, q, headers) {
 
 // Routes that change something, or that reach across sites, are the owner's alone.
 const ADMIN_ONLY = new Set([
-  'sites', 'site', 'site/key', 'site/view-key', 'site/delete', 'site/adopt',
+  'sites', 'sites/overview', 'site', 'site/key', 'site/view-key', 'site/delete', 'site/adopt', 'site/clean-paths',
   'detect', 'delete', 'purge', 'snippet'
 ]);
 

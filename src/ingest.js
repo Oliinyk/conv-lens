@@ -1,4 +1,5 @@
 import { parseUa, parseSource, hashIp, packSnapshot } from './db.js';
+import { normalizePath } from './paths.js';
 
 // Turns one batch from the tracker into rows. Every row carries cfg.siteId, so one database
 // holds any number of sites without them ever seeing each other's data.
@@ -28,6 +29,8 @@ export async function ingestBatch(db, cfg, env, meta) {
   const items = Array.isArray(env.items) ? env.items : [];
   if (!env.sid || !items.length) return { ok: false, reason: 'empty' };
 
+  const pathMode = cfg.pathMode || 'noise';
+  const cleanPath = (v) => normalizePath(v, pathMode).slice(0, 300);
   const ua = env.ua || meta.ua || '';
   const { browser, os, isBot } = parseUa(ua);
   const now = Date.now();
@@ -41,7 +44,7 @@ export async function ingestBatch(db, cfg, env, meta) {
        device, browser, os, vw, vh, touch, country, lang, ip_hash, is_bot, currency, ip, city, region)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, args: [
       env.sid, cfg.siteId || '', env.vid || '', env.startedAt || now, now,
-      (env.path || '').slice(0, 300), (env.path || '').slice(0, 300), (env.ref || '').slice(0, 300),
+      cleanPath(env.path), cleanPath(env.path), (env.ref || '').slice(0, 300),
       src.source, src.medium, src.campaign, env.dev || 'desktop', browser, os,
       env.vw || 0, env.vh || 0, env.touch ? 1 : 0,
       meta.country || '', (env.lang || '').slice(0, 12), hashIp(meta.ip || ''), isBot,
@@ -60,7 +63,7 @@ export async function ingestBatch(db, cfg, env, meta) {
     if (it.t === 'snapshot') {
       if (snapshots >= 6 || !Array.isArray(d.els)) continue;
       snapshots++;
-      writes.push({ sql: SNAP_SQL, args: [env.sid, site, it.ts || now, (it.p || '').slice(0, 300), env.dev || 'desktop',
+      writes.push({ sql: SNAP_SQL, args: [env.sid, site, it.ts || now, cleanPath(it.p), env.dev || 'desktop',
         d.w || 0, d.h || 0, env.vw || 0, env.vh || 0, packSnapshot({ els: d.els, w: d.w, h: d.h })] });
       continue;
     }
@@ -70,7 +73,7 @@ export async function ingestBatch(db, cfg, env, meta) {
       : d.depth != null ? Number(d.depth)
       : d.n != null ? Number(d.n) : null;
     writes.push({ sql: EV_SQL, args: [
-      env.sid, site, it.ts || now, it.s || 0, it.t, (it.p || '').slice(0, 300),
+      env.sid, site, it.ts || now, it.s || 0, it.t, cleanPath(it.p),
       (d.sel || '').slice(0, 200) || null, (d.label || '').slice(0, 120) || null,
       name ? String(name).slice(0, 180) : null,
       Number.isFinite(num) ? num : null, JSON.stringify(d).slice(0, 4000)

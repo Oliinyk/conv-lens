@@ -15,6 +15,7 @@ export const DEFAULTS = {
   mousePathSampleMs: 120,
   snapshotMaxElements: 450,
   replayMode: 'snapshot',
+  pathMode: 'noise',
   funnel: [],
   ctaSelectors: [],
   ctaText: '',

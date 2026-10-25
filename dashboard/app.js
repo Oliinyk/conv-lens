@@ -560,7 +560,7 @@ const TABS = {
   overview: renderOverview, insights: renderInsights, funnel: renderFunnel,
   sessions: renderSessions, heat: renderHeat, elements: renderElements,
   forms: renderForms, speed: renderSpeed, segments: renderSegments, survey: renderSurvey,
-  sources: renderSources, audience: renderAudience, journey: renderJourney,
+  sources: renderSources, audience: renderAudience, journey: renderJourney, sites: renderSites,
   events: renderEvents, users: renderUsers, settings: renderSettingsTab
 };
 
@@ -765,6 +765,58 @@ const MEDIUM_LABEL = {
   referral: 'перехід із сайту', none: 'прямий захід'
 };
 const mediumLabel = (m) => MEDIUM_LABEL[m] || m || '—';
+
+// Every site at once, for whoever owns them all. Clicking a row switches the whole dashboard
+// to that site, which is otherwise only possible through the small picker in the header.
+async function renderSites() {
+  const d = await api('sites/overview');
+  const list = d.sites || [];
+  view.innerHTML = '';
+
+  const fresh = (ms) => {
+    if (!ms) return h('span', { class: 'dlt bad' }, 'даних немає');
+    const days = (Date.now() - ms) / 86400000;
+    if (days < 1) return h('span', { class: 'dlt good' }, 'сьогодні');
+    if (days < 3) return h('span', {}, 'днями');
+    return h('span', { class: 'dlt bad' }, `${Math.round(days)} дн. тому`);
+  };
+
+  view.appendChild(card('Ваші сайти', 'клік по рядку — перейти в цей сайт; період угорі діє на всі',
+    table(['Сайт', 'Адреса', { label: 'Сесій', num: 1 }, { label: 'Людей', num: 1 }, { label: 'Замовлень', num: 1 },
+      { label: 'Конверсія', num: 1 }, { label: 'Дохід', num: 1 }, { label: 'Відмови', num: 1 },
+      { label: 'Фрикшн', num: 1 }, 'Свіжість'],
+      list.map((x) => {
+        const row = h('tr', { style: 'cursor:pointer' + (x.id === state.site ? ';font-weight:600' : '') }, [
+          h('td', {}, x.name || x.id),
+          h('td', { class: 'mono trunc' }, (x.origin || '').replace(/^https?:\/\//, '')),
+          h('td', { class: 'num' }, nf(x.sessions)),
+          h('td', { class: 'num' }, nf(x.visitors)),
+          h('td', { class: 'num' }, nf(x.orders)),
+          h('td', { class: 'num' }, x.cr ? h('b', {}, x.cr + '%') : '—'),
+          h('td', { class: 'num' }, x.revenue ? money(x.revenue, x.currency) : '—'),
+          h('td', { class: 'num' }, x.bounceRate + '%'),
+          h('td', { class: 'num' }, x.friction > 25 ? h('span', { class: 'pill warning' }, String(x.friction)) : String(x.friction)),
+          h('td', {}, fresh(x.lastEventAt))
+        ]);
+        row.addEventListener('click', () => {
+          if (x.id === state.site) { switchTab('overview'); return; }
+          state.site = x.id;
+          state.cache = {};
+          siteSelect();
+          const label = document.getElementById('siteLabel');
+          if (label) label.textContent = (x.origin || x.name || '').replace(/^https?:\/\//, '');
+          switchTab('overview');
+        });
+        return row;
+      }))));
+
+  const add = h('button', { class: 'primary', type: 'button' }, '+ Додати сайт');
+  add.addEventListener('click', () => switchTab('settings'));
+  view.appendChild(h('div', { class: 'card', style: 'margin-top:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap' }, [
+    h('span', { style: 'color:var(--text-2);font-size:13.5px' }, 'Новий сайт додається внизу вкладки «Налаштування».'),
+    add
+  ]));
+}
 
 // Where visitors come from: channels, exact sources, campaigns, referring sites and
 // landing pages — each with what matters, which is conversion, not just volume.
@@ -972,8 +1024,12 @@ document.getElementById('btnCompare').addEventListener('click', (e) => {
   else switchTab('overview');
 });
 document.getElementById('fSite').addEventListener('change', (e) => {
+  if (e.target.value === '__all__') { e.target.value = state.site; switchTab('sites'); return; }
   state.site = e.target.value;
   state.cache = {};
+  const cur = state.sites.find((x) => x.id === state.site);
+  const label = document.getElementById('siteLabel');
+  if (label && cur) label.textContent = (cur.origin || cur.name || '').replace(/^https?:\/\//, '');
   renderTab();
 });
 document.getElementById('btnTheme').addEventListener('click', () => {
@@ -1010,9 +1066,11 @@ function sameOriginSite() {
 // A view key opens one site read-only: no settings, no switching to another site.
 function applyRole() {
   const viewer = state.role === 'viewer';
-  const tab = document.querySelector('#tabs button[data-tab="settings"]');
-  if (tab) tab.style.display = viewer ? 'none' : '';
-  if (viewer && state.tab === 'settings') switchTab('overview');
+  for (const name of ['settings', 'sites']) {
+    const tab = document.querySelector(`#tabs button[data-tab="${name}"]`);
+    if (tab) tab.style.display = viewer ? 'none' : '';
+  }
+  if (viewer && (state.tab === 'settings' || state.tab === 'sites')) switchTab('overview');
   const logout = document.getElementById('btnLogout');
   if (logout) logout.title = viewer ? 'Вийти: забути ключ у цьому браузері' : logout.title;
 }
@@ -1022,8 +1080,11 @@ function siteSelect() {
   if (!sel) return;
   sel.innerHTML = '';
   state.sites.forEach((x) => sel.appendChild(h('option', { value: x.id }, x.name || x.origin || x.id)));
+  // The owner always sees the picker, even with one site: otherwise there is nothing on screen
+  // saying that this dashboard holds several, or how to reach them.
+  if (state.role === 'owner') sel.appendChild(h('option', { value: '__all__' }, '— усі сайти —'));
   sel.value = state.site;
-  sel.style.display = state.sites.length > 1 && state.role === 'owner' ? '' : 'none';
+  sel.style.display = state.role === 'owner' ? '' : 'none';
 }
 
 async function refreshSites() {

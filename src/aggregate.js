@@ -316,14 +316,25 @@ export async function heatmap(db, f, path, device, sid) {
     GROUP BY d ORDER BY d`).all(...args));
   // A layout snapshot for this page, so the click map can be drawn without loading the real
   // site in an iframe (which is impossible when Conv Lens runs on its own domain).
-  const snapArgs = [...f.args, path];
-  let snapExtra = '';
-  if (device) { snapExtra += ' AND sn.device = ?'; snapArgs.push(device); }
-  const snapRow = await db.prepare(`SELECT sn.w, sn.h, sn.data FROM snapshots sn JOIN sessions s ON s.id = sn.session_id
-    WHERE ${f.sql} AND sn.path = ? ${snapExtra} ORDER BY sn.ts DESC LIMIT 1`).get(...snapArgs);
-  const snapshot = snapRow ? { ...(unpackSnapshot(snapRow.data) || { els: [] }), w: snapRow.w, h: snapRow.h } : null;
+  // It must match the device most of these clicks came from: drawing desktop clicks on a
+  // phone layout (or the reverse) scatters them over empty space.
+  const byDevice = new Map();
+  for (const c of clicks) byDevice.set(c.device, (byDevice.get(c.device) || 0) + 1);
+  const mainDevice = device || [...byDevice.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || '';
 
-  return { path, device: device || 'all', sid: sid || '', clicks, depth, snapshot };
+  const pickSnapshot = async (dev) => {
+    const args = [...f.args, path];
+    let extra = '';
+    if (dev) { extra = ' AND sn.device = ?'; args.push(dev); }
+    return db.prepare(`SELECT sn.w, sn.h, sn.device, sn.data FROM snapshots sn JOIN sessions s ON s.id = sn.session_id
+      WHERE ${f.sql} AND sn.path = ? ${extra} ORDER BY sn.ts DESC LIMIT 1`).get(...args);
+  };
+  const snapRow = (await pickSnapshot(mainDevice)) || (await pickSnapshot(''));
+  const snapshot = snapRow
+    ? { ...(unpackSnapshot(snapRow.data) || { els: [] }), w: snapRow.w, h: snapRow.h, device: snapRow.device }
+    : null;
+
+  return { path, device: device || 'all', sid: sid || '', clicks, depth, snapshot, mainDevice };
 }
 
 export async function pathList(db, f, limit = 40) {

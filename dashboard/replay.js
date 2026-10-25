@@ -44,7 +44,13 @@ export function buildPage(snapshot, { interactive = false } = {}) {
     st.left = e.x + 'px'; st.top = e.y + 'px'; st.width = e.w + 'px'; st.height = e.h + 'px';
     if (e.bg) st.background = e.bg;
     if (e.c) st.color = e.c;
-    if (e.fs) st.fontSize = Math.max(9, e.fs) + 'px';
+    if (e.fs) {
+      // The original font is not loaded here, so the same pixel size takes more room and the
+      // text gets cut. One-line boxes get a size that fits the height they were measured at.
+      const oneLine = e.h && e.h < e.fs * 2.2;
+      st.fontSize = Math.max(9, oneLine ? Math.min(e.fs, e.h * 0.78) : e.fs) + 'px';
+      st.lineHeight = oneLine ? e.h + 'px' : '1.18';
+    }
     if (e.fw) st.fontWeight = e.fw;
     if (e.k === 'img' && e.src) { st.backgroundImage = `url(${e.src})`; st.backgroundSize = 'cover'; st.backgroundPosition = 'center'; }
     if (e.t) d.textContent = e.t;
@@ -318,12 +324,32 @@ export function renderHeatmap(host, data, mode = 'all') {
   inner.style.transform = `scale(${k})`;
   stage.style.height = Math.min(H * k + 20, 640) + 'px';
 
+  // Clicks arrive from every screen width there was, while the skeleton is one width.
+  // Each click carries the box of the element it landed on, so it is placed at the same spot
+  // inside that element here. Without this a phone click lands in empty space on a desktop
+  // layout, which is what makes the map look broken.
+  const bySel = new Map();
+  for (const el of snap.els || []) {
+    if (el.sel && !bySel.has(el.sel)) bySel.set(el.sel, el);
+  }
+  const place = (c) => {
+    const el = c.sel ? bySel.get(c.sel) : null;
+    if (el && c.ew > 0 && c.eh > 0 && c.ex != null && c.ey != null) {
+      const rx = Math.min(1, Math.max(0, (c.x - c.ex) / c.ew));
+      const ry = Math.min(1, Math.max(0, (c.y - c.ey) / c.eh));
+      return { x: el.x + rx * el.w, y: el.y + ry * el.h, anchored: true };
+    }
+    // No match: at least rescale from the width the click was recorded at.
+    const k = c.vw > 0 ? W / c.vw : 1;
+    return { x: c.x * k, y: c.y * k, anchored: false };
+  };
+
   const pts = data.clicks.filter((c) => {
     if (mode === 'rage') return c.type === 'rage_click';
     if (mode === 'dead') return c.type === 'dead_click';
     if (mode === 'lost') return !c.converted;
     return true;
-  }).filter((c) => c.y != null && c.y <= H);
+  }).map((c) => ({ ...c, ...place(c) })).filter((c) => c.y != null && c.y <= H);
 
   const off = document.createElement('canvas');
   off.width = W; off.height = H;
@@ -353,11 +379,11 @@ export function renderHeatmap(host, data, mode = 'all') {
   ctx.putImageData(img, 0, 0);
 
   ctx.lineWidth = 2;
-  data.clicks.filter((c) => c.type === 'rage_click').forEach((c) => {
+  data.clicks.map((c) => ({ ...c, ...place(c) })).filter((c) => c.type === 'rage_click').forEach((c) => {
     ctx.strokeStyle = '#d03b3b';
     ctx.beginPath(); ctx.arc(c.x, c.y, 16, 0, Math.PI * 2); ctx.stroke();
   });
-  data.clicks.filter((c) => c.type === 'dead_click').forEach((c) => {
+  data.clicks.map((c) => ({ ...c, ...place(c) })).filter((c) => c.type === 'dead_click').forEach((c) => {
     ctx.strokeStyle = '#fab219';
     ctx.beginPath(); ctx.arc(c.x, c.y, 12, 0, Math.PI * 2); ctx.stroke();
   });
