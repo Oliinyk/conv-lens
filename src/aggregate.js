@@ -663,3 +663,55 @@ export async function journeys(db, f) {
     steps
   };
 }
+
+// People the site named for us with cl('identify', id, traits). Analytics can only see sessions;
+// whatever the site knows about a person — score, level, mistakes — arrives as traits and is shown
+// as it came, so this works for any site without Conv Lens knowing anything about its domain.
+export async function users(db, f, limit = 200) {
+  const rows = await db.prepare(`SELECT s.identity id,
+      COUNT(*) sessions,
+      MIN(s.started_at) first_at,
+      MAX(s.last_at) last_at,
+      SUM(s.pageviews) pageviews,
+      SUM(s.duration) duration,
+      MAX(s.max_step) max_step,
+      SUM(s.converted) conversions,
+      SUM(s.rage) rage,
+      SUM(s.js_errors + s.net_errors + s.validation_errors) errors,
+      AVG(s.friction) friction
+    FROM sessions s
+    WHERE ${f.sql} AND s.identity IS NOT NULL AND s.identity <> ''
+    GROUP BY s.identity
+    ORDER BY last_at DESC
+    LIMIT ${Number(limit) || 200}`).all(...f.args);
+
+  if (!rows.length) return { users: [], traitKeys: [] };
+
+  const traitRows = await db.prepare(`SELECT s.identity id, e.ts, e.data
+    FROM events e JOIN sessions s ON s.id = e.session_id
+    WHERE ${f.sql} AND e.type = 'identify' AND s.identity IS NOT NULL AND s.identity <> ''
+    ORDER BY e.ts ASC`).all(...f.args);
+
+  const latest = new Map();
+  for (const row of traitRows) {
+    let traits = null;
+    try { traits = JSON.parse(row.data || '{}').traits; } catch { traits = null; }
+    if (traits && typeof traits === 'object') latest.set(row.id, traits);
+  }
+
+  const keys = [];
+  for (const traits of latest.values()) {
+    for (const key of Object.keys(traits)) {
+      if (!keys.includes(key) && keys.length < 8) keys.push(key);
+    }
+  }
+
+  return {
+    traitKeys: keys,
+    users: rows.map((r) => ({
+      ...r,
+      friction: Math.round(r.friction || 0),
+      traits: latest.get(r.id) || {}
+    }))
+  };
+}

@@ -284,6 +284,7 @@ export async function handle(req, opts = {}) {
       case 'paths': return json(200, { paths: await agg.pathList(db, f) });
       case 'heatmap': return json(200, await agg.heatmap(db, f, q.path || '/', q.device || '', q.sid || ''));
       case 'events': return json(200, await customEvents(db, f));
+      case 'users': return json(200, { ...(await agg.users(db, f)), funnel: cfg.funnel });
       case 'storage': return json(200, await agg.storage(db, site.id));
       case 'delete': {
         if (method !== 'POST') return json(405, { error: 'POST only' });

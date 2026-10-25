@@ -561,8 +561,43 @@ const TABS = {
   sessions: renderSessions, heat: renderHeat, elements: renderElements,
   forms: renderForms, speed: renderSpeed, segments: renderSegments, survey: renderSurvey,
   sources: renderSources, audience: renderAudience, journey: renderJourney,
-  events: renderEvents, settings: renderSettingsTab
+  events: renderEvents, users: renderUsers, settings: renderSettingsTab
 };
+
+// People the site itself named with cl('identify', id, traits). Everything in «traits» is shown
+// exactly as the site sent it: Conv Lens has no idea whether that is a score, a level or a plan.
+async function renderUsers() {
+  const d = await api('users');
+  const users = d.users || [];
+  const keys = d.traitKeys || [];
+  const steps = d.funnel || [];
+  view.innerHTML = '';
+
+  if (!users.length) {
+    view.appendChild(h('div', { class: 'empty' }, [
+      h('p', {}, 'Поки жодного впізнаного користувача.'),
+      h('p', {}, 'Коли людина входить в акаунт, викличте на сайті cl(\'identify\', \'<id>\', { бали: 120, крок: \'Урок 3\' }) — і тут зʼявиться рядок із її числами. Без цього аналітика бачить лише анонімні сесії.')
+    ]));
+    return;
+  }
+
+  const when = (ms) => new Date(ms).toLocaleString('uk-UA', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const stepName = (i) => (i >= 0 && steps[i] ? steps[i].name || steps[i].id : '—');
+  const traitValue = (v) => (v === null || v === undefined || v === '' ? '—' : String(v));
+
+  view.appendChild(card('Користувачі', `${nf(users.length)} впізнаних людей за період`, table(
+    ['Хто', ...keys, 'Крок фунела', { label: 'Сесій', num: 1 }, { label: 'Помилок', num: 1 }, { label: 'Фрикшн', num: 1 }, 'Востаннє'],
+    users.map((u) => h('tr', {}, [
+      h('td', { class: 'mono' }, u.id),
+      ...keys.map((k) => h('td', {}, traitValue(u.traits[k]))),
+      h('td', {}, stepName(u.max_step)),
+      h('td', { class: 'num' }, nf(u.sessions)),
+      h('td', { class: 'num' }, nf(u.errors + u.rage)),
+      h('td', { class: 'num' }, nf(u.friction)),
+      h('td', { class: 'mono' }, when(u.last_at))
+    ]))
+  )));
+}
 
 // Who comes: first-timers against people who came back, and where they are.
 async function renderAudience() {
