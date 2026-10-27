@@ -106,8 +106,14 @@ export async function inspectSite(url, siteKey = '') {
 
   // The tag, and whether it is this site's tag: a key from another site records elsewhere.
   const tags = [...html.matchAll(/<script[^>]+src=["']([^"']*\/cl\/t\.js[^"']*)["']/gi)].map((m) => m[1]);
-  const keys = tags.map((src) => (src.match(/[?&]s=([A-Za-z0-9_-]+)/) || [])[1]).filter(Boolean);
-  const placeholder = tags.some((t) => /CONV-LENS-HOST|CONV-LENS-SITE-KEY|ВАШ-CONV-LENS/.test(t));
+  // A preload fetches the file and never runs it. Seen on its own it looks like the tag is
+  // installed while nothing is ever recorded, which is the hardest state to diagnose by eye.
+  const preloads = [...html.matchAll(/<link[^>]+href=["']([^"']*\/cl\/t\.js[^"']*)["'][^>]*>/gi)]
+    .filter((m) => /rel=["']?preload/i.test(m[0]))
+    .map((m) => m[1]);
+  const preloadOnly = !tags.length && preloads.length > 0;
+  const keys = [...tags, ...preloads].map((src) => (src.match(/[?&]s=([A-Za-z0-9_-]+)/) || [])[1]).filter(Boolean);
+  const placeholder = [...tags, ...preloads].some((t) => /CONV-LENS-HOST|CONV-LENS-SITE-KEY|ВАШ-CONV-LENS/.test(t));
 
   return {
     ok: true,
@@ -118,8 +124,9 @@ export async function inspectSite(url, siteKey = '') {
     preset,
     tag: {
       found: tags.length > 0,
+      preloadOnly,
       placeholder,
-      src: tags[0] || '',
+      src: tags[0] || preloads[0] || '',
       keyMatches: siteKey ? keys.includes(siteKey) : null,
       otherKey: siteKey && keys.length > 0 && !keys.includes(siteKey)
     }

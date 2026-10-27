@@ -353,6 +353,11 @@ export async function renderSettings(view, ctx) {
       if (!r.ok) {
         checkOut.className = 'inst wait';
         checkOut.textContent = 'Не вдалось відкрити сайт: ' + r.error;
+      } else if (r.tag.preloadOnly) {
+        checkOut.className = 'inst wait';
+        checkOut.textContent = 'На сторінці є лише <link rel="preload"> на трекер, але немає <script src="…">. '
+          + 'Preload тільки завантажує файл у кеш і нічого не виконує, тому дані не збираються. '
+          + 'Потрібен звичайний тег <script>; у Next.js — компонент Script зі strategy="afterInteractive".';
       } else if (!r.tag.found) {
         checkOut.className = 'inst wait';
         checkOut.textContent = 'Коду немає в HTML сторінки. Якщо ви вставляли його через GTM або через компонент '
