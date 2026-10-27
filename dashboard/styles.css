@@ -326,3 +326,6 @@ textarea.inp { resize: vertical; line-height: 1.5; }
 /* The scaled page's real footprint: without it the stage scrolls sideways over empty space. */
 .heat-fit { position: relative; overflow: hidden; margin: 0 auto; }
 .heat-stage { overflow-x: hidden; overflow-y: auto; }
+
+/* The scaled recording's real footprint, so the stage is not mostly emptiness. */
+.rp-fit { position: relative; overflow: hidden; }

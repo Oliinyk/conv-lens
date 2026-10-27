@@ -142,7 +142,11 @@ export function renderReplay(host, detail, onClose) {
   const viewport = h('div', { class: 'viewport' });
   viewport.style.width = vw + 'px';
   viewport.style.height = vh + 'px';
-  const stage = h('div', { class: 'stage' }, viewport);
+  // The viewport is wrapped in a box the size it actually occupies once scaled: a transform
+  // does not change layout, so without this the stage reserves the full page size and the
+  // recording sits as a stamp in a field of empty darkness.
+  const fitBox = h('div', { class: 'rp-fit' }, viewport);
+  const stage = h('div', { class: 'stage' }, fitBox);
   const cursorEl = h('div', { class: 'cursor' });
 
   let currentPath = null, pageEl = null;
@@ -156,10 +160,16 @@ export function renderReplay(host, detail, onClose) {
   }
 
   function fit() {
-    const avail = stage.clientWidth - 32, availH = 520;
-    const k = Math.min(avail / vw, availH / vh, 1);
+    const availW = Math.max(160, stage.clientWidth - 32);
+    const availH = Math.max(360, Math.min(700, innerHeight * 0.68));
+    // Phone recordings are scaled up, not left at 1:1. A 390px page inside a 1200px stage is
+    // unreadable and looks broken; the cap keeps a tiny viewport from turning into mush.
+    const k = Math.min(availW / vw, availH / vh, 2);
     viewport.style.transform = `scale(${k})`;
-    viewport.style.transformOrigin = 'center center';
+    viewport.style.transformOrigin = '0 0';
+    fitBox.style.width = Math.round(vw * k) + 'px';
+    fitBox.style.height = Math.round(vh * k) + 'px';
+    stage.style.height = Math.round(vh * k + 24) + 'px';
   }
 
   const evList = h('div', { class: 'ev-list' });
@@ -219,6 +229,8 @@ export function renderReplay(host, detail, onClose) {
   ]));
   fit();
   addEventListener('resize', fit);
+  const ro = new ResizeObserver(fit);
+  ro.observe(stage);
 
   function fmtOffset(ms) {
     const t = Math.max(0, Math.round(ms / 1000));
@@ -296,7 +308,7 @@ export function renderReplay(host, detail, onClose) {
     else cancelAnimationFrame(raf);
   }
   seek(0);
-  return { destroy() { playing = false; cancelAnimationFrame(raf); removeEventListener('resize', fit); } };
+  return { destroy() { playing = false; cancelAnimationFrame(raf); removeEventListener('resize', fit); ro.disconnect(); } };
 }
 
 const RAMP = ['#cde2fb', '#9ec5f4', '#6da7ec', '#3987e5', '#256abf', '#184f95', '#0d366b'];
