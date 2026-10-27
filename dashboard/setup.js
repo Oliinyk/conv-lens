@@ -488,6 +488,51 @@ export async function renderSettings(view, ctx) {
     ]));
   }
 
+  // --- the owner's own password
+  {
+    const pass1 = input({ type: 'password', autocomplete: 'new-password', placeholder: 'Новий пароль' });
+    const pass2 = input({ type: 'password', autocomplete: 'new-password', placeholder: 'Ще раз' });
+    const out = h('p', { class: 'inst', style: 'display:none' });
+    const btn = h('button', { class: 'primary', type: 'submit' }, 'Змінити пароль');
+    const form2 = h('form', { class: 'card set-form' }, [
+      h('h2', {}, 'Ваш пароль'),
+      h('p', { class: 'lead' }, 'Зараз ви заходите довгим ключем, який видав майстер. Його можна замінити на '
+        + 'звичайний пароль. Після зміни старий ключ перестане працювати — на всіх пристроях.'),
+      h('div', { class: 'grid2' }, [field('Новий пароль', pass1), field('Підтвердження', pass2)]),
+      out,
+      btn
+    ]);
+    form2.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      out.style.display = 'none';
+      if (pass1.value !== pass2.value) {
+        out.className = 'inst wait'; out.style.display = ''; out.textContent = 'Паролі не збігаються.';
+        return;
+      }
+      if (pass1.value.trim().length < 8) {
+        out.className = 'inst wait'; out.style.display = ''; out.textContent = 'Хоча б 8 символів.';
+        return;
+      }
+      if (!confirm('Старий ключ перестане працювати одразу, зокрема там, де ви вже увійшли. Продовжити?')) return;
+      btn.disabled = true;
+      try {
+        const r = await apiPost('owner-password', { password: pass1.value.trim() });
+        // The reply carries the new session token, so this browser stays logged in.
+        try { localStorage.setItem('conv-lens-key', r.token); } catch {}
+        out.className = 'inst ok';
+        out.style.display = '';
+        out.textContent = 'Пароль змінено. Цей браузер лишається в системі; на інших треба увійти наново.';
+        pass1.value = ''; pass2.value = '';
+      } catch (e) {
+        out.className = 'inst wait';
+        out.style.display = '';
+        out.textContent = e.message;
+      }
+      btn.disabled = false;
+    });
+    view.appendChild(form2);
+  }
+
   // --- who may open this dashboard
   {
     const card = h('div', { class: 'card set-form' }, [

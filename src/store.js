@@ -145,6 +145,10 @@ export const tokenIsFromEnv = () => !!process.env.CONV_LENS_TOKEN;
 // site is created the dashboard is closed and needs the key.
 export async function needsSetup(db) {
   if (await adminToken(db)) return false;
+  // Someone with a password counts as "set up" too. Without this, replacing the owner key
+  // with a password would leave the instance open to anyone who knows the address.
+  const acc = await db.prepare('SELECT COUNT(*) n FROM access').get();
+  if (acc && acc.n > 0) return false;
   return (await listSites(db)).length === 0;
 }
 
@@ -268,3 +272,21 @@ export async function getAccessByToken(db, token) {
   if (!token) return null;
   return (await db.prepare('SELECT id, label, site_id, token FROM access WHERE token = ?').get(token)) || null;
 }
+
+// Replaces the owner's 32-character key with a password of their choosing. The password lands
+// in the same hashed table as everyone else's; the old key is only dropped once the new entry
+// exists, so there is no moment where nobody can get in.
+export async function setOwnerPassword(db, password) {
+  const pass = String(password || '').trim();
+  if (pass.length < 8) return { ok: false, error: 'Пароль має бути не коротшим за 8 символів' };
+  if (tokenIsFromEnv()) {
+    return { ok: false, error: 'Пароль задано змінною CONV_LENS_TOKEN у хостингу — міняйте його там' };
+  }
+  const existing = (await listAccess(db)).filter((a) => !a.site_id && a.label === OWNER_LABEL);
+  const made = await createAccess(db, { label: OWNER_LABEL, siteId: '', password: pass });
+  for (const old of existing) await deleteAccess(db, old.id);
+  await db.prepare("DELETE FROM settings WHERE k = 'admin_token'").run();
+  return { ok: true, token: made.token };
+}
+
+export const OWNER_LABEL = 'Власник';

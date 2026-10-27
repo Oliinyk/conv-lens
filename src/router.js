@@ -15,7 +15,7 @@ import {
   listSites, getSite, createSite, updateSite, rotateKey, deleteSite, resolveSite,
   siteConfig, adminToken, tokenIsFromEnv, needsSetup, setSetting, newKey,
   countOrphans, adoptOrphans, getSiteByViewKey, rotateViewKey, ensureViewKey, cleanPaths,
-  listAccess, createAccess, deleteAccess, loginWithPassword, getAccessByToken
+  listAccess, createAccess, deleteAccess, loginWithPassword, getAccessByToken, setOwnerPassword
 } from './store.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -215,6 +215,15 @@ export async function handle(req, opts = {}) {
     });
   }
 
+  // The owner swapping their generated key for a password they can actually say out loud.
+  if (route === 'owner-password') {
+    if (method !== 'POST') return json(405, { error: 'POST only' });
+    let b = {};
+    try { b = JSON.parse(req.body || '{}'); } catch {}
+    const r = await setOwnerPassword(db, b.password);
+    return r.ok ? json(200, r) : json(400, { error: r.error });
+  }
+
   if (route === 'access/delete') {
     if (method !== 'POST') return json(405, { error: 'POST only' });
     let b = {};
@@ -388,8 +397,10 @@ export async function handle(req, opts = {}) {
 async function access(db, q, headers) {
   const given = q.key || String(headers.authorization || '').replace(/^Bearer\s+/i, '');
   const token = await adminToken(db);
-  if (!token) return { admin: true, siteId: '' };
-  if (given && given === token) return { admin: true, siteId: '', label: 'власник' };
+  // Open only while nothing has been set up at all. Once there is a key, a password or a site,
+  // a caller must prove who they are.
+  if (!token && (await needsSetup(db))) return { admin: true, siteId: '', label: 'налаштування' };
+  if (token && given === token) return { admin: true, siteId: '', label: 'власник' };
   if (given) {
     // A session token issued in exchange for someone's password.
     const acc = await getAccessByToken(db, given);
@@ -403,7 +414,7 @@ async function access(db, q, headers) {
 // Routes that change something, or that reach across sites, are the owner's alone.
 const ADMIN_ONLY = new Set([
   'sites', 'sites/overview', 'site', 'site/key', 'site/view-key', 'site/delete', 'site/adopt', 'site/clean-paths',
-  'access', 'access/delete', 'detect', 'delete', 'purge', 'snippet'
+  'access', 'access/delete', 'owner-password', 'detect', 'delete', 'purge', 'snippet'
 ]);
 
 function decodeHeader(v) { try { return decodeURIComponent(String(v || '')); } catch { return String(v || ''); } }
