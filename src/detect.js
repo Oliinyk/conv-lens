@@ -1,5 +1,8 @@
 // Looks at a site from the server so the owner does not have to answer questions about it:
 // what it is built on, and whether the Conv Lens tag is actually on the page.
+// It reads the HTML as served and runs no scripts, so a tag injected at runtime — by GTM, or
+// by a React/Next.js component — will not be seen here. "Not found" means "not in the HTML",
+// which is why the dashboard treats arriving data as the stronger signal.
 // This is the "is it installed?" answer that otherwise takes a developer and a browser console.
 import { lookup } from 'node:dns/promises';
 

@@ -355,7 +355,9 @@ export async function renderSettings(view, ctx) {
         checkOut.textContent = 'Не вдалось відкрити сайт: ' + r.error;
       } else if (!r.tag.found) {
         checkOut.className = 'inst wait';
-        checkOut.textContent = 'Код на сторінці не знайдено. Перевірте, що ви вставили рядок саме на цей сайт і зберегли зміни.';
+        checkOut.textContent = 'Коду немає в HTML сторінки. Якщо ви вставляли його через GTM або через компонент '
+          + 'у React/Next.js, перевірка його не побачить — вона читає сторінку без виконання скриптів. '
+          + 'Надійніша ознака — чи приходять дані (напис вище).';
       } else if (r.tag.placeholder) {
         checkOut.className = 'inst wait';
         checkOut.textContent = 'Код стоїть, але в ньому лишився приклад замість ваших значень — замініть адресу та ключ на ті, що вище.';
