@@ -225,10 +225,15 @@
     }
     return trim(s, 90);
   }
+  var snapCount = 0;
   function snapshot() {
     var key = path + '|' + deviceType();
     if (snapped[key]) return;
+    // A site that rewrites the address on every scroll would otherwise produce a layout
+    // capture per scroll position. Eight distinct pages is more than any replay needs.
+    if (snapCount >= 8) return;
     snapped[key] = 1;
+    snapCount++;
     var els = [], all = D.body ? D.body.querySelectorAll('*') : [], n = 0;
     var sx = W.scrollX || 0, sy = W.scrollY || 0;
     for (var i = 0; i < all.length && n < SNAP_MAX; i++) {
@@ -262,6 +267,21 @@
       h: Math.max(D.documentElement.scrollHeight, W.innerHeight),
       els: els
     });
+  }
+
+  // Some routers change the address with replaceState and some fire pushState without the
+  // address changing. Both are handled by asking one question: is this a different page?
+  function maybePageview() {
+    if (location.pathname + (location.search || '') === path) return;
+    snapshotNow();
+    pageview();
+  }
+
+  // Captures the page being left. snapshot() is keyed by path, so calling it again when the
+  // 1.2s timer already fired costs nothing — but a page abandoned sooner than that would
+  // otherwise have no layout at all, and the player would show the wrong one in its place.
+  function snapshotNow() {
+    try { snapshot(); } catch (e) {}
   }
 
   function pageview() {
@@ -566,7 +586,11 @@
       if (s > 1.15) push('zoom', { scale: Math.round(s * 100) / 100 });
     });
   }
-  W.addEventListener('popstate', function () { push('back_nav', { to: location.pathname }); pageview(); });
+  W.addEventListener('popstate', function () {
+    push('back_nav', { to: location.pathname });
+    snapshotNow();
+    setTimeout(maybePageview, 30);
+  });
   D.addEventListener('copy', function () {
     var sel = trim(String(W.getSelection ? W.getSelection() : ''), 80);
     push('copy', { text: sel });
@@ -611,11 +635,22 @@
   }
 
   var hp = history.pushState, hr = history.replaceState;
-  history.pushState = function () { var r = hp.apply(this, arguments); setTimeout(pageview, 30); return r; };
-  history.replaceState = function () { var r = hr.apply(this, arguments); return r; };
+  history.pushState = function () {
+    snapshotNow();
+    var r = hp.apply(this, arguments);
+    setTimeout(maybePageview, 30);
+    return r;
+  };
+  history.replaceState = function () {
+    snapshotNow();
+    var r = hr.apply(this, arguments);
+    setTimeout(maybePageview, 30);
+    return r;
+  };
 
   addEventListener('visibilitychange', function () {
     if (D.visibilityState === 'hidden') {
+      snapshotNow();
       push('page_leave', {
         ms: Date.now() - pageStart, depth: maxDepth, dirChanges: dirChanges,
         lastField: lastField ? lastField.key : '', step: funnelStep()
