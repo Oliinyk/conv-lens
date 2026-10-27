@@ -226,7 +226,9 @@ export async function renderSettings(view, ctx) {
   });
 
   const form = h('form', { class: 'card set-form' }, [
-    h('h2', {}, 'Налаштування сайту'),
+    h('h2', {}, `Налаштування сайту «${site.name || site.id}»`),
+    h('p', { class: 'lead' }, 'Ці поля змінюють саме цей сайт. Щоб завести ще один, скористайтесь формою '
+      + '«Ще один сайт» унизу сторінки — інакше новий сайт писатиме дані в цей.'),
     h('div', { class: 'grid2' }, [
       field('Назва', name),
       field('Адреса сайту', origin, 'З цього домену приймаються дані.')
@@ -263,8 +265,20 @@ export async function renderSettings(view, ctx) {
     h('div', { class: 'row-actions' }, [save, saved])
   ]);
 
+  const originWas = site.origin || '';
   form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
+    // Repointing a site that already has data is how two different websites end up sharing one
+    // bucket: the reports keep the old site's sessions while the name says something else.
+    const originNow = origin.value.trim();
+    if (originNow !== originWas && (d.install?.sessions || 0) > 0) {
+      const ok = confirm(
+        `У цього сайту вже є ${nf(d.install.sessions)} записаних сесій з ${originWas || 'попередньої адреси'}.\n\n`
+        + 'Зміна адреси їх не переносить і не видаляє — вони залишаться тут, під новою назвою.\n\n'
+        + 'Якщо ви хочете підключити ІНШИЙ сайт, не міняйте адресу: скористайтесь формою «Ще один сайт» унизу.\n\n'
+        + 'Все одно змінити адресу?');
+      if (!ok) { origin.value = originWas; return; }
+    }
     err.style.display = 'none';
     save.disabled = true;
     try {
@@ -475,7 +489,7 @@ export async function renderSettings(view, ctx) {
   const addPreset = select(presets.map((p) => [p.id, p.label]), 'shop');
   const addBtn = h('button', { class: 'primary', type: 'submit' }, 'Додати сайт');
   const addErr = h('p', { class: 'form-err', style: 'display:none' });
-  const addForm = h('form', { class: 'card set-form' }, [
+  const addForm = h('form', { class: 'card set-form', id: 'addSiteForm' }, [
     h('h2', {}, 'Ще один сайт'),
     h('p', { class: 'lead' }, 'Та сама програма обслуговує скільки треба сайтів — у кожного свій код і свої дані.'),
     h('div', { class: 'grid2' }, [field('Назва', addName), field('Адреса', addOrigin)]),

@@ -811,9 +811,18 @@ async function renderSites() {
       }))));
 
   const add = h('button', { class: 'primary', type: 'button' }, '+ Додати сайт');
-  add.addEventListener('click', () => switchTab('settings'));
+  add.addEventListener('click', () => {
+    switchTab('settings');
+    // Land on the add form rather than on the current site's settings, which is where people
+    // start editing the wrong site.
+    setTimeout(() => {
+      const f = document.getElementById('addSiteForm');
+      if (f) { f.scrollIntoView({ behavior: 'smooth', block: 'center' }); f.querySelector('input')?.focus(); }
+    }, 900);
+  });
   view.appendChild(h('div', { class: 'card', style: 'margin-top:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap' }, [
-    h('span', { style: 'color:var(--text-2);font-size:13.5px' }, 'Новий сайт додається внизу вкладки «Налаштування».'),
+    h('span', { style: 'color:var(--text-2);font-size:13.5px' },
+      'Кожен сайт має свій код і свої дані. Новий сайт не можна зробити, змінивши адресу наявного.'),
     add
   ]));
 }

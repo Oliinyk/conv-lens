@@ -322,16 +322,34 @@ export async function heatmap(db, f, path, device, sid) {
   for (const c of clicks) byDevice.set(c.device, (byDevice.get(c.device) || 0) + 1);
   const mainDevice = device || [...byDevice.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || '';
 
-  const pickSnapshot = async (dev) => {
+  const candidates = async (dev) => {
     const args = [...f.args, path];
     let extra = '';
     if (dev) { extra = ' AND sn.device = ?'; args.push(dev); }
     return db.prepare(`SELECT sn.w, sn.h, sn.device, sn.data FROM snapshots sn JOIN sessions s ON s.id = sn.session_id
-      WHERE ${f.sql} AND sn.path = ? ${extra} ORDER BY sn.ts DESC LIMIT 1`).get(...args);
+      WHERE ${f.sql} AND sn.path = ? ${extra} ORDER BY sn.ts DESC LIMIT 8`).all(...args);
   };
-  const snapRow = (await pickSnapshot(mainDevice)) || (await pickSnapshot(''));
+
+  // The newest snapshot is not always the right backdrop: one visit from a different site
+  // sharing this key, or a page that changed, would hijack the map. Candidates are scored by
+  // how many of the elements people actually clicked they contain, so the chosen layout is
+  // the one the clicks belong to.
+  const wanted = new Map();
+  for (const c of clicks) if (c.sel) wanted.set(c.sel, (wanted.get(c.sel) || 0) + 1);
+  const pickBest = (rows) => {
+    let best = null, bestScore = -1;
+    for (const row of rows) {
+      const unpacked = unpackSnapshot(row.data);
+      if (!unpacked) continue;
+      let score = 0;
+      for (const el of unpacked.els || []) if (el.sel && wanted.has(el.sel)) score += wanted.get(el.sel);
+      if (score > bestScore) { bestScore = score; best = { ...row, unpacked }; }
+    }
+    return best;
+  };
+  const snapRow = pickBest(await candidates(mainDevice)) || pickBest(await candidates(''));
   const snapshot = snapRow
-    ? { ...(unpackSnapshot(snapRow.data) || { els: [] }), w: snapRow.w, h: snapRow.h, device: snapRow.device }
+    ? { ...(snapRow.unpacked || { els: [] }), w: snapRow.w, h: snapRow.h, device: snapRow.device }
     : null;
 
   return { path, device: device || 'all', sid: sid || '', clicks, depth, snapshot, mainDevice };

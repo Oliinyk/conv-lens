@@ -317,12 +317,24 @@ export function renderHeatmap(host, data, mode = 'all') {
   const canvas = h('canvas', { class: 'heat-canvas' });
   canvas.width = W; canvas.height = H;
   inner.appendChild(canvas);
-  const stage = h('div', { class: 'heat-stage' }, inner);
+  // `transform: scale` shrinks what you see but not the space the element takes, so the
+  // container kept reserving the full page width and showed a horizontal scrollbar over
+  // empty darkness. The scaled page goes in a box sized to what it actually occupies.
+  const fit = h('div', { class: 'heat-fit' }, inner);
+  const stage = h('div', { class: 'heat-stage' }, fit);
   host.appendChild(stage);
 
-  const k = Math.min((stage.clientWidth - 24) / W, 1);
-  inner.style.transform = `scale(${k})`;
-  stage.style.height = Math.min(H * k + 20, 640) + 'px';
+  const resize = () => {
+    const avail = Math.max(120, stage.clientWidth - 24);
+    const k = Math.min(avail / W, 1);
+    inner.style.transform = `scale(${k})`;
+    fit.style.width = Math.round(W * k) + 'px';
+    fit.style.height = Math.round(H * k) + 'px';
+    stage.style.height = Math.min(H * k + 20, 640) + 'px';
+  };
+  resize();
+  const ro = new ResizeObserver(resize);
+  ro.observe(stage);
 
   // Clicks arrive from every screen width there was, while the skeleton is one width.
   // Each click carries the box of the element it landed on, so it is placed at the same spot
