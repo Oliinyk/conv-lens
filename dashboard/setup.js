@@ -544,8 +544,8 @@ export async function renderSettings(view, ctx) {
   {
     const card = h('div', { class: 'card set-form' }, [
       h('h2', {}, 'Хто має доступ'),
-      h('p', { class: 'lead' }, 'Кожен запис — це одна людина зі своїм паролем. Пароль показується один раз. '
-        + 'Щоб закрити комусь доступ, приберіть його запис — решта працюватимуть далі.')
+      h('p', { class: 'lead' }, 'Кожен запис — це одна людина зі своїм паролем. Пароль можна підглянути в таблиці '
+        + 'або видати новий кнопкою ↻. Щоб закрити комусь доступ, приберіть його запис — решта працюватимуть далі.')
     ]);
     const listBox = h('div', {});
     const out = h('p', { class: 'inst', style: 'display:none' });
@@ -558,7 +558,7 @@ export async function renderSettings(view, ctx) {
       if (!rows.length) {
         listBox.appendChild(h('p', { class: 'fld-h' }, 'Поки доступ має лише власник — ви, за своїм ключем.'));
       } else {
-        listBox.appendChild(table(['Кому', 'Що бачить', 'Створено', 'Останній вхід', ''],
+        listBox.appendChild(table(['Кому', 'Що бачить', 'Пароль', 'Створено', 'Останній вхід', ''],
           rows.map((a) => {
             const del = h('button', { class: 'ghost', type: 'button' }, 'Прибрати');
             del.addEventListener('click', async () => {
@@ -566,10 +566,43 @@ export async function renderSettings(view, ctx) {
               try { await apiPost('access/delete', { id: a.id }); await draw(); }
               catch (e) { alert('Не вдалось: ' + e.message); }
             });
+
+            // Hidden until asked for, so the table is not a wall of passwords over someone's
+            // shoulder, and copyable because that is what it is for.
+            const pw = h('code', { class: 'pw' }, a.shown ? '••••••••' : '—');
+            const show = h('button', { class: 'ghost sm', type: 'button' }, a.shown ? 'Показати' : 'Новий');
+            show.addEventListener('click', async () => {
+              if (a.shown && pw.textContent === '••••••••') {
+                pw.textContent = a.shown;
+                show.textContent = 'Сховати';
+                return;
+              }
+              if (a.shown) { pw.textContent = '••••••••'; show.textContent = 'Показати'; return; }
+              if (!confirm(`Видати «${a.label}» новий пароль? Старий перестане працювати.`)) return;
+              try {
+                const r = await apiPost('access/password', { id: a.id });
+                a.shown = r.password;
+                pw.textContent = r.password;
+                show.textContent = 'Сховати';
+              } catch (e) { alert('Не вдалось: ' + e.message); }
+            });
+
+            const reset = h('button', { class: 'ghost sm', type: 'button', title: 'Видати новий пароль' }, '↻');
+            reset.addEventListener('click', async () => {
+              if (!confirm(`Видати «${a.label}» новий пароль? Старий перестане працювати одразу.`)) return;
+              try {
+                const r = await apiPost('access/password', { id: a.id });
+                a.shown = r.password;
+                pw.textContent = r.password;
+                show.textContent = 'Сховати';
+              } catch (e) { alert('Не вдалось: ' + e.message); }
+            });
+
             const when = (ms) => (ms ? new Date(ms).toLocaleDateString('uk-UA') : '—');
             return h('tr', {}, [
               h('td', {}, a.label),
               h('td', {}, a.scope),
+              h('td', {}, h('span', { class: 'pw-cell' }, [pw, show, a.shown ? reset : null])),
               h('td', {}, when(a.created_at)),
               h('td', {}, a.last_at ? when(a.last_at) : 'ще не заходив'),
               h('td', {}, del)

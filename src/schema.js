@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS settings(
   k TEXT PRIMARY KEY, v TEXT
 );
 CREATE TABLE IF NOT EXISTS access(
-  id TEXT PRIMARY KEY, label TEXT, site_id TEXT, secret TEXT,
+  id TEXT PRIMARY KEY, label TEXT, site_id TEXT, secret TEXT, shown TEXT,
   token TEXT UNIQUE, created_at INTEGER, last_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS sessions(
@@ -54,5 +54,6 @@ export const MIGRATIONS = [
   'ALTER TABLE sessions ADD COLUMN region TEXT',
   'ALTER TABLE events ADD COLUMN site_id TEXT',
   'ALTER TABLE snapshots ADD COLUMN site_id TEXT',
-  'ALTER TABLE sites ADD COLUMN view_key TEXT'
+  'ALTER TABLE sites ADD COLUMN view_key TEXT',
+  'ALTER TABLE access ADD COLUMN shown TEXT'
 ];

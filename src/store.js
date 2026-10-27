@@ -228,8 +228,7 @@ function secretMatches(password, stored) {
 }
 
 export async function listAccess(db) {
-  const rows = await db.prepare('SELECT id, label, site_id, created_at, last_at FROM access ORDER BY created_at').all();
-  return rows;
+  return db.prepare('SELECT id, label, site_id, shown, created_at, last_at FROM access ORDER BY created_at').all();
 }
 
 export async function createAccess(db, { label, siteId = '', password } = {}) {
@@ -239,12 +238,16 @@ export async function createAccess(db, { label, siteId = '', password } = {}) {
     label: String(label || '').slice(0, 60) || 'Без назви',
     site_id: String(siteId || ''),
     secret: hashSecret(pass),
+    // Kept readable on purpose: the owner has to be able to tell a client their password
+    // later. Verification still goes through the hash; this copy exists only to be shown
+    // back to the owner, who can already revoke or replace any of these.
+    shown: pass,
     token: newKey(24),
     created_at: Date.now(),
     last_at: 0
   };
-  await db.prepare('INSERT INTO access (id, label, site_id, secret, token, created_at, last_at) VALUES (?,?,?,?,?,?,?)')
-    .run(row.id, row.label, row.site_id, row.secret, row.token, row.created_at, row.last_at);
+  await db.prepare('INSERT INTO access (id, label, site_id, secret, shown, token, created_at, last_at) VALUES (?,?,?,?,?,?,?,?)')
+    .run(row.id, row.label, row.site_id, row.secret, row.shown, row.token, row.created_at, row.last_at);
   return { ...row, password: pass };
 }
 
@@ -290,3 +293,14 @@ export async function setOwnerPassword(db, password) {
 }
 
 export const OWNER_LABEL = 'Власник';
+
+// Issues a new password for an existing person, invalidating the one they had. Also the way
+// to recover an entry created before passwords were kept readable.
+export async function resetAccessPassword(db, id, password) {
+  const row = await db.prepare('SELECT id, label FROM access WHERE id = ?').get(String(id || ''));
+  if (!row) return null;
+  const pass = String(password || '').trim() || newKey(9);
+  await db.prepare('UPDATE access SET secret = ?, shown = ?, token = ? WHERE id = ?')
+    .run(hashSecret(pass), pass, newKey(24), row.id);
+  return { id: row.id, label: row.label, password: pass };
+}

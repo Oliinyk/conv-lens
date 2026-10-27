@@ -15,7 +15,8 @@ import {
   listSites, getSite, createSite, updateSite, rotateKey, deleteSite, resolveSite,
   siteConfig, adminToken, tokenIsFromEnv, needsSetup, setSetting, newKey,
   countOrphans, adoptOrphans, getSiteByViewKey, rotateViewKey, ensureViewKey, cleanPaths,
-  listAccess, createAccess, deleteAccess, loginWithPassword, getAccessByToken, setOwnerPassword
+  listAccess, createAccess, deleteAccess, loginWithPassword, getAccessByToken, setOwnerPassword,
+  resetAccessPassword
 } from './store.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -224,6 +225,14 @@ export async function handle(req, opts = {}) {
     return r.ok ? json(200, r) : json(400, { error: r.error });
   }
 
+  if (route === 'access/password') {
+    if (method !== 'POST') return json(405, { error: 'POST only' });
+    let b = {};
+    try { b = JSON.parse(req.body || '{}'); } catch {}
+    const r = await resetAccessPassword(db, q.id || b.id, b.password);
+    return r ? json(200, r) : json(404, { error: 'Такого доступу немає' });
+  }
+
   if (route === 'access/delete') {
     if (method !== 'POST') return json(405, { error: 'POST only' });
     let b = {};
@@ -414,7 +423,7 @@ async function access(db, q, headers) {
 // Routes that change something, or that reach across sites, are the owner's alone.
 const ADMIN_ONLY = new Set([
   'sites', 'sites/overview', 'site', 'site/key', 'site/view-key', 'site/delete', 'site/adopt', 'site/clean-paths',
-  'access', 'access/delete', 'owner-password', 'detect', 'delete', 'purge', 'snippet'
+  'access', 'access/delete', 'access/password', 'owner-password', 'detect', 'delete', 'purge', 'snippet'
 ]);
 
 function decodeHeader(v) { try { return decodeURIComponent(String(v || '')); } catch { return String(v || ''); } }

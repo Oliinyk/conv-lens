@@ -206,10 +206,20 @@ export function renderReplay(host, detail, onClose) {
   });
 
   const btnPlay = h('button', { class: 'primary', onclick: toggle }, '▶');
-  const btnSpeed = h('button', { onclick: () => { speed = speed === 1 ? 2 : speed === 2 ? 4 : 1; btnSpeed.textContent = speed + '×'; } }, '1×');
+  // A row of speeds, as in the live player: one cycling button hid 8× entirely and never
+  // showed which speeds existed.
+  const speedBtns = [1, 2, 4, 8].map((sp) => h('button', {
+    type: 'button',
+    'aria-pressed': String(sp === 1),
+    onclick: () => {
+      speed = sp;
+      speedBtns.forEach((b, i) => b.setAttribute('aria-pressed', String([1, 2, 4, 8][i] === sp)));
+    }
+  }, sp + '×'));
+  const speedBox = h('div', { class: 'sp-speed', role: 'group', 'aria-label': 'Швидкість' }, speedBtns);
   const timeLabel = h('span', { class: 'mono' }, '0:00');
   const controls = h('div', { class: 'controls' }, [
-    btnPlay, btnSpeed, scrub, timeLabel,
+    btnPlay, speedBox, scrub, timeLabel,
     onClose ? h('button', { class: 'ghost', onclick: onClose }, '✕ закрити') : null
   ]);
 
