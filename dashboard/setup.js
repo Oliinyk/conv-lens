@@ -18,6 +18,11 @@ function keyHeader() {
   } catch { return {}; }
 }
 
+const table = (headers, rows) => h('div', { style: 'overflow:auto' }, h('table', {}, [
+  h('thead', {}, h('tr', {}, headers.map((x) => h('th', {}, x)))),
+  h('tbody', {}, rows)
+]));
+
 const field = (label, input, hint) => h('label', { class: 'fld' }, [
   h('span', { class: 'fld-l' }, label),
   input,
@@ -481,6 +486,81 @@ export async function renderSettings(view, ctx) {
       ])),
       h('p', { class: 'fld-h' }, 'Найбільше місця забирають рухи мишки. Якщо база росте швидко — зменште «Записувати» або термін зберігання.')
     ]));
+  }
+
+  // --- who may open this dashboard
+  {
+    const card = h('div', { class: 'card set-form' }, [
+      h('h2', {}, 'Хто має доступ'),
+      h('p', { class: 'lead' }, 'Кожен запис — це одна людина зі своїм паролем. Пароль показується один раз. '
+        + 'Щоб закрити комусь доступ, приберіть його запис — решта працюватимуть далі.')
+    ]);
+    const listBox = h('div', {});
+    const out = h('p', { class: 'inst', style: 'display:none' });
+
+    const draw = async () => {
+      listBox.innerHTML = '';
+      let d2;
+      try { d2 = await api('access'); } catch (e) { listBox.appendChild(h('p', { class: 'fld-h' }, 'Не вдалось завантажити: ' + e.message)); return; }
+      const rows = d2.access || [];
+      if (!rows.length) {
+        listBox.appendChild(h('p', { class: 'fld-h' }, 'Поки доступ має лише власник — ви, за своїм ключем.'));
+      } else {
+        listBox.appendChild(table(['Кому', 'Що бачить', 'Створено', 'Останній вхід', ''],
+          rows.map((a) => {
+            const del = h('button', { class: 'ghost', type: 'button' }, 'Прибрати');
+            del.addEventListener('click', async () => {
+              if (!confirm(`Закрити доступ для «${a.label}»? Його пароль перестане працювати одразу.`)) return;
+              try { await apiPost('access/delete', { id: a.id }); await draw(); }
+              catch (e) { alert('Не вдалось: ' + e.message); }
+            });
+            const when = (ms) => (ms ? new Date(ms).toLocaleDateString('uk-UA') : '—');
+            return h('tr', {}, [
+              h('td', {}, a.label),
+              h('td', {}, a.scope),
+              h('td', {}, when(a.created_at)),
+              h('td', {}, a.last_at ? when(a.last_at) : 'ще не заходив'),
+              h('td', {}, del)
+            ]);
+          })));
+      }
+
+      const who = input({ type: 'text', placeholder: 'Імʼя або компанія' });
+      const scope = select([['', 'усі сайти (повний доступ)'], ...(d2.sites || []).map((x) => [x.id, 'лише ' + x.name])], '');
+      const pass = input({ type: 'text', placeholder: 'Лишіть порожнім — згенеруємо' });
+      const addBtn = h('button', { class: 'primary', type: 'submit' }, 'Видати доступ');
+      const addForm = h('form', { style: 'margin-top:16px' }, [
+        h('h3', {}, 'Видати доступ'),
+        h('div', { class: 'grid2' }, [field('Кому', who), field('Що зможе бачити', scope)]),
+        field('Пароль', pass, 'Запишіть його — показуємо лише зараз.'),
+        addBtn
+      ]);
+      addForm.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        if (!who.value.trim()) { who.focus(); return; }
+        addBtn.disabled = true;
+        try {
+          const r = await apiPost('access', { label: who.value.trim(), siteId: scope.value, password: pass.value.trim() });
+          out.className = 'inst ok';
+          out.style.display = '';
+          out.innerHTML = '';
+          out.append(`Доступ для «${r.access.label}» створено. Пароль (показуємо один раз): `);
+          out.appendChild(h('b', {}, r.password));
+          await draw();
+        } catch (e) {
+          out.className = 'inst wait';
+          out.style.display = '';
+          out.textContent = 'Не вдалось: ' + e.message;
+        }
+        addBtn.disabled = false;
+      });
+      listBox.appendChild(addForm);
+    };
+
+    card.appendChild(out);
+    card.appendChild(listBox);
+    view.appendChild(card);
+    draw();
   }
 
   // --- adding another site

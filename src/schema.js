@@ -8,6 +8,10 @@ CREATE TABLE IF NOT EXISTS sites(
 CREATE TABLE IF NOT EXISTS settings(
   k TEXT PRIMARY KEY, v TEXT
 );
+CREATE TABLE IF NOT EXISTS access(
+  id TEXT PRIMARY KEY, label TEXT, site_id TEXT, secret TEXT,
+  token TEXT UNIQUE, created_at INTEGER, last_at INTEGER
+);
 CREATE TABLE IF NOT EXISTS sessions(
   id TEXT PRIMARY KEY, site_id TEXT, visitor_id TEXT, started_at INTEGER, last_at INTEGER, duration INTEGER DEFAULT 0,
   entry_path TEXT, exit_path TEXT, referrer TEXT, source TEXT, medium TEXT, campaign TEXT,

@@ -14,7 +14,8 @@ import { publicConfig } from './config.js';
 import {
   listSites, getSite, createSite, updateSite, rotateKey, deleteSite, resolveSite,
   siteConfig, adminToken, tokenIsFromEnv, needsSetup, setSetting, newKey,
-  countOrphans, adoptOrphans, getSiteByViewKey, rotateViewKey, ensureViewKey, cleanPaths
+  countOrphans, adoptOrphans, getSiteByViewKey, rotateViewKey, ensureViewKey, cleanPaths,
+  listAccess, createAccess, deleteAccess, loginWithPassword, getAccessByToken
 } from './store.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -123,7 +124,7 @@ export async function handle(req, opts = {}) {
     if (!who) return json(200, { needsSetup: false, needsKey: true, sites: [], presets: [] });
     const visible = who.admin ? sites : sites.filter((x) => x.id === who.siteId);
     return json(200, {
-      needsSetup: false, role: who.admin ? 'owner' : 'viewer',
+      needsSetup: false, role: who.admin ? 'owner' : 'viewer', label: who.label || '',
       sites: visible.map(({ view_key, ...rest }) => rest),
       presets: who.admin ? PRESET_LIST : [],
       storage: who.admin ? storageKind() : undefined,
@@ -151,6 +152,28 @@ export async function handle(req, opts = {}) {
     }
   }
 
+  // Exchanges a password for a session token. The password is never stored by the browser
+  // and never sent again.
+  if (route === 'login') {
+    if (method !== 'POST') return json(405, { error: 'POST only' });
+    let b = {};
+    try { b = JSON.parse(req.body || '{}'); } catch {}
+    const pass = String(b.password || '').trim();
+    if (!pass) return json(400, { error: 'Введіть пароль' });
+
+    const token = await adminToken(db);
+    if (token && pass === token) return json(200, { token, role: 'owner', label: 'власник' });
+
+    const acc = await loginWithPassword(db, pass);
+    if (acc) return json(200, { token: acc.token, role: acc.site_id ? 'viewer' : 'owner', label: acc.label });
+
+    // A view-key link pasted into the password box is a reasonable mistake to accept.
+    const site = await getSiteByViewKey(db, pass.replace(/^.*key=/, ''));
+    if (site) return json(200, { token: site.view_key, role: 'viewer', label: site.name });
+
+    return json(401, { error: 'Пароль не підійшов' });
+  }
+
   if (route === 'setup') {
     if (!setupOpen) return json(403, { error: 'Налаштування вже завершено' });
     if (method !== 'POST') return json(405, { error: 'POST only' });
@@ -172,6 +195,35 @@ export async function handle(req, opts = {}) {
   }
 
   if (route === 'presets') return json(200, { presets: PRESET_LIST });
+
+  // Who may open this dashboard. Each entry is one person with their own password.
+  if (route === 'access') {
+    if (method === 'POST') {
+      let b = {};
+      try { b = JSON.parse(req.body || '{}'); } catch {}
+      if (!String(b.label || '').trim()) return json(400, { error: 'Вкажіть, кому цей доступ' });
+      if (b.siteId && !(await getSite(db, b.siteId))) return json(400, { error: 'Такого сайту немає' });
+      const made = await createAccess(db, { label: b.label, siteId: b.siteId || '', password: b.password });
+      return json(200, { access: { id: made.id, label: made.label, site_id: made.site_id }, password: made.password });
+    }
+    const all = await listAccess(db);
+    const sites = await listSites(db);
+    const nameOf = (id) => (sites.find((x) => x.id === id) || {}).name || id;
+    return json(200, {
+      access: all.map((a) => ({ ...a, scope: a.site_id ? nameOf(a.site_id) : 'усі сайти' })),
+      sites: sites.map((x) => ({ id: x.id, name: x.name }))
+    });
+  }
+
+  if (route === 'access/delete') {
+    if (method !== 'POST') return json(405, { error: 'POST only' });
+    let b = {};
+    try { b = JSON.parse(req.body || '{}'); } catch {}
+    const id = q.id || b.id;
+    if (!id) return json(400, { error: 'id required' });
+    await deleteAccess(db, String(id));
+    return json(200, { ok: true });
+  }
 
   // A list of every site with the numbers that matter, so the owner can see them side by side
   // and jump straight into one.
@@ -337,10 +389,13 @@ async function access(db, q, headers) {
   const given = q.key || String(headers.authorization || '').replace(/^Bearer\s+/i, '');
   const token = await adminToken(db);
   if (!token) return { admin: true, siteId: '' };
-  if (given && given === token) return { admin: true, siteId: '' };
+  if (given && given === token) return { admin: true, siteId: '', label: 'власник' };
   if (given) {
+    // A session token issued in exchange for someone's password.
+    const acc = await getAccessByToken(db, given);
+    if (acc) return { admin: !acc.site_id, siteId: acc.site_id || '', label: acc.label, accessId: acc.id };
     const site = await getSiteByViewKey(db, given);
-    if (site) return { admin: false, siteId: site.id };
+    if (site) return { admin: false, siteId: site.id, label: 'посилання' };
   }
   return null;
 }
@@ -348,7 +403,7 @@ async function access(db, q, headers) {
 // Routes that change something, or that reach across sites, are the owner's alone.
 const ADMIN_ONLY = new Set([
   'sites', 'sites/overview', 'site', 'site/key', 'site/view-key', 'site/delete', 'site/adopt', 'site/clean-paths',
-  'detect', 'delete', 'purge', 'snippet'
+  'access', 'access/delete', 'detect', 'delete', 'purge', 'snippet'
 ]);
 
 function decodeHeader(v) { try { return decodeURIComponent(String(v || '')); } catch { return String(v || ''); } }

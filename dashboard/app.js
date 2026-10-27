@@ -89,21 +89,42 @@ function fail(e) {
 
 function showLogin(wrong) {
   view.innerHTML = '';
-  const input = h('input', { type: 'password', id: 'clKey', autocomplete: 'current-password', placeholder: 'Ключ доступу', style: 'width:100%;padding:12px 14px;font:inherit;border:1px solid var(--line, #ccc);border-radius:10px;background:transparent;color:inherit' });
-  const form = h('form', { class: 'card', style: 'max-width:420px;margin:48px auto;padding:28px;display:grid;gap:14px' }, [
-    h('h2', { style: 'margin:0;font-size:20px' }, 'Вхід у Conv Lens'),
-    h('p', { style: 'margin:0;opacity:.75;line-height:1.5' }, 'Введіть ключ доступу до дашборда. Браузер запам\'ятає його, вводити знову не доведеться.'),
-    wrong ? h('p', { style: 'margin:0;color:#d43031;font-weight:600' }, 'Ключ не підійшов. Перевірте і спробуйте ще раз.') : null,
-    h('label', { for: 'clKey', style: 'font-size:13px;font-weight:600' }, 'Ключ'),
+  document.body.classList.add('setup-mode');
+  const input = h('input', { type: 'password', id: 'clKey', autocomplete: 'current-password', placeholder: 'Пароль', class: 'inp' });
+  const err = h('p', { class: 'form-err', style: wrong ? '' : 'display:none' }, 'Пароль не підійшов. Перевірте і спробуйте ще раз.');
+  const btn = h('button', { class: 'primary', type: 'submit', style: 'padding:12px' }, 'Увійти');
+  const form = h('form', { class: 'card setup', style: 'max-width:420px;margin:48px auto' }, [
+    h('h2', {}, 'Вхід у Conv Lens'),
+    h('p', { class: 'lead' }, 'Дашборд закритий. Введіть пароль, який вам видали — браузер запамʼятає вхід, і питати знову не буде.'),
+    err,
+    h('label', { for: 'clKey', class: 'fld-l' }, 'Пароль'),
     input,
-    h('button', { class: 'primary', type: 'submit', style: 'padding:12px' }, 'Увійти')
+    btn
   ]);
-  form.addEventListener('submit', (ev) => {
+  form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
-    const k = input.value.trim();
-    if (!k) return;
-    KEY = k; saveKey(k);
-    boot();
+    const pass = input.value.trim();
+    if (!pass) return;
+    btn.disabled = true;
+    err.style.display = 'none';
+    try {
+      // The password is exchanged for a token once; only the token is kept and sent later.
+      const res = await fetch('/api/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pass })
+      });
+      const d = await res.json();
+      if (!res.ok || !d.token) throw new Error(d.error || 'не вийшло');
+      KEY = d.token; saveKey(d.token);
+      document.body.classList.remove('setup-mode');
+      booted = false;
+      boot();
+    } catch (e) {
+      err.textContent = e.message === 'не вийшло' ? 'Пароль не підійшов.' : e.message;
+      err.style.display = '';
+      btn.disabled = false;
+      input.select();
+    }
   });
   view.appendChild(form);
   setTimeout(() => input.focus(), 0);
@@ -1133,6 +1154,7 @@ async function boot() {
   } catch { /* fall through to the normal login */ }
 
   if (!KEY) return showLogin(false);
+  document.body.classList.remove('setup-mode');
 
   try {
     const d = await refreshSites();

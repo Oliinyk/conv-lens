@@ -1,6 +1,6 @@
 // Sites and instance settings. One deployment of Conv Lens serves any number of sites;
 // each one is a row here with its own public key and its own config.
-import { randomBytes } from 'node:crypto';
+import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { resolveConfig } from './config.js';
 import { normalizePath } from './paths.js';
 
@@ -206,4 +206,65 @@ export async function cleanPaths(db, siteId, mode = 'noise') {
   }
   for (let i = 0; i < writes.length; i += 80) await db.batch(writes.slice(i, i + 80));
   return { pages: seen.size, merged };
+}
+
+// ---------------------------------------------------------------- named access
+// People, not links. Each entry is one person with their own password, scoped either to
+// everything or to a single site, and revocable on its own.
+
+const hashSecret = (password, salt = randomBytes(16).toString('hex')) =>
+  `${salt}:${scryptSync(String(password), salt, 32).toString('hex')}`;
+
+function secretMatches(password, stored) {
+  if (!stored || !stored.includes(':')) return false;
+  const [salt, want] = stored.split(':');
+  const got = scryptSync(String(password), salt, 32).toString('hex');
+  // Fixed-length hex on both sides, so a length mismatch cannot happen here.
+  return got.length === want.length && timingSafeEqual(Buffer.from(got, 'hex'), Buffer.from(want, 'hex'));
+}
+
+export async function listAccess(db) {
+  const rows = await db.prepare('SELECT id, label, site_id, created_at, last_at FROM access ORDER BY created_at').all();
+  return rows;
+}
+
+export async function createAccess(db, { label, siteId = '', password } = {}) {
+  const pass = String(password || '').trim() || newKey(9);
+  const row = {
+    id: newKey(8),
+    label: String(label || '').slice(0, 60) || 'Без назви',
+    site_id: String(siteId || ''),
+    secret: hashSecret(pass),
+    token: newKey(24),
+    created_at: Date.now(),
+    last_at: 0
+  };
+  await db.prepare('INSERT INTO access (id, label, site_id, secret, token, created_at, last_at) VALUES (?,?,?,?,?,?,?)')
+    .run(row.id, row.label, row.site_id, row.secret, row.token, row.created_at, row.last_at);
+  return { ...row, password: pass };
+}
+
+export async function deleteAccess(db, id) {
+  if (!id) return 0;
+  await db.prepare('DELETE FROM access WHERE id = ?').run(String(id));
+  return 1;
+}
+
+// A password is exchanged for a token once; the password itself is never stored by the
+// browser and never travels on later requests.
+export async function loginWithPassword(db, password) {
+  if (!password) return null;
+  const rows = await db.prepare('SELECT id, label, site_id, secret, token FROM access').all();
+  for (const row of rows) {
+    if (secretMatches(password, row.secret)) {
+      await db.prepare('UPDATE access SET last_at = ? WHERE id = ?').run(Date.now(), row.id);
+      return row;
+    }
+  }
+  return null;
+}
+
+export async function getAccessByToken(db, token) {
+  if (!token) return null;
+  return (await db.prepare('SELECT id, label, site_id, token FROM access WHERE token = ?').get(token)) || null;
 }
